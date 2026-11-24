@@ -1,4 +1,4 @@
-const VERSION='0.1.1-preview';
+const VERSION='0.1.2-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -20,7 +20,7 @@ const TABS=[['live','实时位置','mdi:map-marker-radius-outline'],['history','
 const NS='luxe_location_probe/';
 const fmt=t=>t?new Date(t).toLocaleString('zh-CN',{hour12:false}):'—';
 const el=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
-const icon=name=>{const paths={'mdi:menu':'M4 6h16M4 12h16M4 18h16','mdi:map-marker-radius-outline':'M12 21s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z M12 6a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:map-marker-path':'M5 6a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M19 14a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M7 8h7a3 3 0 0 1 0 6H8a3 3 0 0 0 0 6h7','mdi:cellphone':'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z M10 18h4','mdi:cog-outline':'M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M19 5l-2 2 M7 17l-2 2','mdi:dots-horizontal':'M5 12h.1M12 12h.1M19 12h.1'};const ns='http://www.w3.org/2000/svg',e=document.createElementNS(ns,'svg'),p=document.createElementNS(ns,'path');e.setAttribute('viewBox','0 0 24 24');e.setAttribute('width','22');e.setAttribute('height','22');e.setAttribute('aria-hidden','true');p.setAttribute('d',paths[name]||paths['mdi:cellphone']);p.setAttribute('fill','none');p.setAttribute('stroke','currentColor');p.setAttribute('stroke-width',name==='mdi:dots-horizontal'?'4':'1.8');p.setAttribute('stroke-linecap','round');p.setAttribute('stroke-linejoin','round');e.append(p);return e;};
+const icon=name=>{const paths={'mdi:menu':'M4 6h16M4 12h16M4 18h16','mdi:map-marker-radius-outline':'M12 21s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z M12 6a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:map-marker-path':'M5 6a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M19 14a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M7 8h7a3 3 0 0 1 0 6H8a3 3 0 0 0 0 6h7','mdi:cellphone':'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z M10 18h4','mdi:cog-outline':'M10 2h4l.7 3 2 .9 2.7-1.6 2 3.5-2.3 2.1v2.2l2.3 2.1-2 3.5-2.7-1.6-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.6-2-3.5L5 12.1V9.9L2.7 7.8l2-3.5 2.7 1.6 2-.9z M12 8a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:dots-horizontal':'M5 12h.1M12 12h.1M19 12h.1','tablet':'M5 3h14v18H5z M10 18h4','layers':'M3 8l9-5 9 5-9 5z M3 12l9 5 9-5 M3 16l9 5 9-5','locate':'M12 2v4 M12 18v4 M2 12h4 M18 12h4 M12 6a6 6 0 1 0 0 12 6 6 0 1 0 0-12'};const ns='http://www.w3.org/2000/svg',e=document.createElementNS(ns,'svg'),p=document.createElementNS(ns,'path');e.setAttribute('viewBox','0 0 24 24');e.setAttribute('width','22');e.setAttribute('height','22');e.setAttribute('aria-hidden','true');p.setAttribute('d',paths[name]||paths['mdi:cellphone']);p.setAttribute('fill','none');p.setAttribute('stroke','currentColor');p.setAttribute('stroke-width',name==='mdi:dots-horizontal'?'4':'1.8');p.setAttribute('stroke-linecap','round');p.setAttribute('stroke-linejoin','round');e.append(p);return e;};
 const button=(text,fn,cls)=>{const b=el('button',text,cls);b.type='button';b.onclick=fn;return b;};
 class LocationPanel extends HTMLElement{
   set hass(v){this._hass=v;if(this.isConnected&&!this.started)this.start();}
@@ -28,10 +28,10 @@ class LocationPanel extends HTMLElement{
   disconnectedCallback(){this.epoch++;this.started=false;clearInterval(this.timer);this.destroyMap();}
   render(){
     this.innerHTML=`<style>
-    luxe-location-probe{display:block;height:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--primary-background-color,#131820);-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
-    luxe-location-probe *{box-sizing:border-box}.lx-shell{height:100%;display:flex;flex-direction:column;gap:10px;padding:10px;overflow:hidden}
+    luxe-location-probe{display:block;height:100vh;height:100dvh;width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--primary-background-color,#131820);-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
+    luxe-location-probe *{box-sizing:border-box}.lx-shell{height:100%;min-height:0;display:flex;flex-direction:column;gap:10px;padding:10px;overflow:hidden}
     .lx-head,.lx-tabs,.lx-row,.lx-actions,.lx-title{display:flex;align-items:center;gap:10px}
-    .lx-head{flex:none;min-height:44px}.lx-head h1{font-size:21px;margin:0;font-weight:650;flex:1}.lx-tabs{gap:4px;flex:none}
+    .lx-head{flex:none;min-height:44px}.lx-menu{display:none}.lx-map-tools summary{list-style:none;cursor:pointer;padding:7px;display:flex}.lx-map-tools summary::-webkit-details-marker{display:none}.lx-map-tools details:not([open]) button{display:none}.lx-map-tools details button{display:block;width:100%}.lx-list-row[data-focus]{cursor:pointer}.lx-list-row[data-focus]:hover{background:var(--secondary-background-color,#293441)}.lx-marker{width:32px;height:32px;border:2px solid white;border-radius:50%;display:grid;place-items:center;color:white;font:bold 13px sans-serif;box-shadow:0 2px 8px #0006}.lx-marker-label{background:#182330;color:white;padding:3px 7px;border-radius:6px;white-space:nowrap;font:12px sans-serif;margin-top:3px;text-align:center}.lx-head h1{font-size:21px;margin:0;font-weight:650;flex:1}.lx-tabs{gap:4px;flex:none}
     luxe-location-probe button{font:inherit;color:inherit;cursor:pointer;background:transparent;border:0;border-radius:9px;padding:8px 12px}
     luxe-location-probe button:focus-visible{outline:2px solid var(--lx-accent);outline-offset:1px}
     luxe-location-probe button:disabled{opacity:.5;cursor:default}
@@ -42,7 +42,7 @@ class LocationPanel extends HTMLElement{
     .lx-card{background:var(--lx-card);border:1px solid var(--lx-line);border-radius:14px;padding:14px;min-width:0}
     .lx-card h2{font-size:16px;margin:0;font-weight:650}.lx-muted{color:var(--secondary-text-color,#a6afbd);font-size:12px;overflow-wrap:anywhere}
     .lx-title{justify-content:space-between;margin-bottom:10px}.lx-row{justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-row:last-child{border:0}.lx-actions{flex-wrap:wrap}
-    .lx-map-layout{display:grid;grid-template-columns:minmax(260px,320px) minmax(0,1fr);gap:10px;height:100%;min-height:300px}
+    .lx-map-layout{display:grid;grid-template-rows:minmax(0,1fr);grid-template-columns:minmax(260px,290px) minmax(0,1fr);gap:10px;height:100%;min-height:300px}
     .lx-side{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto}.lx-map{position:relative;isolation:isolate;overflow:hidden;border-radius:14px;min-height:260px;background:var(--lx-card)}
     .lx-map-inner{position:absolute;inset:0;touch-action:none}.lx-map-tools{position:absolute;right:10px;top:10px;z-index:5;display:flex;flex-direction:column;gap:4px;background:var(--lx-card);border-radius:10px;padding:4px;box-shadow:0 2px 12px #0002}
     .lx-map-tools button{padding:7px;font-size:12px}.lx-map-tools button[aria-pressed=true]{color:var(--lx-accent)}
@@ -51,19 +51,18 @@ class LocationPanel extends HTMLElement{
     .lx-switch{display:flex;align-items:center;gap:8px;cursor:pointer}.lx-switch input{appearance:none;-webkit-appearance:none;width:42px;height:24px;border-radius:20px;background:#78838e;position:relative;cursor:pointer;margin:0}.lx-switch input:checked{background:var(--lx-accent)}.lx-switch input:before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;background:white;border-radius:50%;transition:transform .15s}.lx-switch input:checked:before{transform:translateX(18px)}
     .lx-more{position:relative}.lx-more summary{cursor:pointer;list-style:none;padding:8px}.lx-more summary::-webkit-details-marker{display:none}.lx-more-panel{position:absolute;right:0;top:100%;z-index:10;min-width:180px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:10px;padding:5px;box-shadow:0 6px 20px #0003}.lx-more-panel button{display:block;width:100%;text-align:left;white-space:nowrap}
     .lx-field{font:inherit;width:100%;padding:8px;border:1px solid var(--lx-line);border-radius:8px;background:var(--lx-card);color:inherit}.lx-sub{margin:8px 0 0}.lx-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-list-row:last-child{border:0}
-    @media(max-width:760px){.lx-head h1{font-size:20px}.lx-tabs{order:5;justify-content:space-around;border-top:1px solid var(--lx-line);padding:5px 0 env(safe-area-inset-bottom,0px)}.lx-tabs button{flex:1;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px}.lx-tabs ha-icon{--mdc-icon-size:23px}.lx-grid{grid-template-columns:1fr}.lx-map-layout{display:flex;flex-direction:column;height:auto;min-height:0}.lx-map{order:-1;flex:none;height:48vh;height:48dvh;min-height:250px}.lx-side{overflow:visible}.lx-card{padding:11px}.lx-shell{padding-bottom:0}}
-    </style><div class="lx-shell"><header class="lx-head"><button id="menu" class="lx-menu" aria-label="打开侧边栏"></button><h1>位置中心</h1><button id="settings-shortcut" aria-label="设置"></button></header><nav class="lx-tabs" aria-label="位置中心页面"></nav><div class="lx-error" role="status"></div><main class="lx-content"></main></div>`;
+    @media(max-width:760px){.lx-menu{display:block}.lx-head h1{font-size:20px}.lx-tabs{order:5;justify-content:space-around;border-top:1px solid var(--lx-line);padding:5px 0 env(safe-area-inset-bottom,0px)}.lx-tabs button{flex:1;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px}.lx-tabs ha-icon{--mdc-icon-size:23px}.lx-grid{grid-template-columns:1fr}.lx-map-layout{display:flex;flex-direction:column;height:auto;min-height:0}.lx-map{order:-1;flex:none;height:48vh;height:48dvh;min-height:250px}.lx-side{overflow:visible}.lx-card{padding:11px}.lx-shell{padding-bottom:0}}
+    </style><div class="lx-shell"><header class="lx-head"><button id="menu" class="lx-menu" aria-label="打开侧边栏"></button><h1>位置中心</h1></header><nav class="lx-tabs" aria-label="位置中心页面"></nav><div class="lx-error" role="status"></div><main class="lx-content"></main></div>`;
     this.querySelector('#menu').append(icon('mdi:menu'));this.querySelector('#menu').onclick=()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true}));
-    this.querySelector('#settings-shortcut').append(icon('mdi:cog-outline'));this.querySelector('#settings-shortcut').onclick=()=>this.switchPage('settings');
     for(const [id,label,glyph] of TABS){const b=button(undefined,()=>this.switchPage(id));b.append(icon(glyph),el('span',label));b.dataset.page=id;this.querySelector('.lx-tabs').append(b);}
     this.switchPage(this.page);
   }
-  async start(){if(this.started)return;this.started=true;const epoch=this.epoch;if(!this._hass.user?.is_admin){this.status('仅管理员可访问');return;}if(this.page==='live'||this.page==='history')this.switchPage(this.page);await this.refresh();if(this.isConnected&&epoch===this.epoch)this.timer=setInterval(()=>{if(!document.hidden&&!this.busy)this.refresh();},60000);}
+  async start(){if(this.started)return;this.started=true;const epoch=this.epoch;if(!this._hass.user?.is_admin){this.status('仅管理员可访问');return;}if(this.page==='live'||this.page==='history')this.switchPage(this.page);await this.refresh();if(this.isConnected&&epoch===this.epoch)this.timer=setInterval(()=>{if(!document.hidden&&!this.busy)this.refresh();},15000);}
   status(s=''){const n=this.querySelector('.lx-error');if(n)n.textContent=s;}
   async refresh(action='list',entity_id,delete_history=false){
     if(this.busy||!this._hass?.user?.is_admin)return;
     const epoch=this.epoch;this.busy=true;
-    try{const r=await this._hass.callWS({type:NS+'storage',action,...(entity_id?{entity_id}:{}),import_history:true,delete_history});if(!this.isConnected||epoch!==this.epoch)return;this.data=r;this.status();this.updateData();}
+    try{const r=await this._hass.callWS({type:NS+'storage',action,...(entity_id?{entity_id}:{}),import_history:true,delete_history,include_position:this.page==='live'});if(!this.isConnected||epoch!==this.epoch)return;this.data=r;this.status();this.updateData();}
     catch(e){if(this.isConnected&&epoch===this.epoch){this.status('操作失败：'+String(e.message||e));this.updateData();}}
     finally{this.busy=false;}
   }
@@ -73,19 +72,19 @@ class LocationPanel extends HTMLElement{
     const main=this.querySelector('.lx-content');main.replaceChildren();
     if(page==='live'||page==='history'){
       const layout=el('div',undefined,'lx-map-layout'),side=el('aside',undefined,'lx-side'),map=el('div',undefined,'lx-map'),target=el('div',undefined,'lx-map-inner'),tools=el('div',undefined,'lx-map-tools');
-      for(const [id,label] of [['standard','标准'],['satellite','卫星'],['dark','深色']]){const b=button(label,()=>this.layer(id));b.dataset.layer=id;b.setAttribute('aria-pressed',String(id===(this.mapLayer||'standard')));tools.append(b);}
+      const details=el('details'),summary=el('summary');summary.setAttribute('aria-label','地图图层');summary.append(icon('layers'));details.append(summary);for(const [id,label] of [['standard','标准'],['satellite','卫星'],['dark','深色']]){const b=button(label,()=>{this.layer(id);details.open=false;});b.dataset.layer=id;b.setAttribute('aria-pressed',String(id===(this.mapLayer||'standard')));details.append(b);}tools.append(details);if(page==='live'){const fit=button(undefined,()=>this.fitMarkers());fit.setAttribute('aria-label','显示全部位置');fit.append(icon('locate'));tools.append(fit);}
       map.append(target,tools);layout.append(side,map);main.append(layout);this.drawSide();
-      if(this._hass?.user?.is_admin)this.buildMap(target);
+      if(this._hass?.user?.is_admin){this.buildMap(target);if(page==='live'&&this.started&&!this.busy)this.refresh();}
     }else this.drawData();
   }
-  updateData(){if(this.page==='live'||this.page==='history')this.drawSide();else this.drawData();}
+  updateData(){if(this.page==='live'||this.page==='history'){this.drawSide();if(this.page==='live')this.syncMarkers();}else this.drawData();}
   drawSide(){
     const side=this.querySelector('.lx-side');if(!side)return;
     const old=side.querySelector('select')?.value,date=side.querySelector('input[type=date]')?.value;side.replaceChildren();
     const data=this.data,devices=(data?.candidates||[]).filter(d=>d.managed);
     if(this.page==='live'){
       const card=el('section',undefined,'lx-card'),head=el('div',undefined,'lx-title');head.append(el('h2','设备位置'),el('span',devices.length+' 台','lx-muted'));card.append(head);
-      for(const d of devices){const row=el('div',undefined,'lx-list-row'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name');avatar.append(icon('mdi:cellphone'));info.append(el('strong',d.name),el('div',d.available?'定位可用 · 地图接口待接入':'暂无定位','lx-muted'));row.append(avatar,info);card.append(row);}
+      for(const d of devices){const row=el('div',undefined,'lx-list-row'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name');avatar.append(icon(/ipad|tablet|平板/i.test(d.name)?'tablet':'mdi:cellphone'));avatar.style.color=this.color(d.entity_id);info.append(el('strong',d.name));const p=d.position;info.append(el('div',p?(p.accuracy==null?'定位可用':'定位精度 '+Math.round(p.accuracy)+' m'):(!d.enabled?'历史记录未开启 · 未展示位置':'暂无定位'),'lx-muted'));if(p){info.append(el('div',fmt(p.updated_at),'lx-muted'));row.dataset.focus=d.entity_id;row.tabIndex=0;row.setAttribute('role','button');row.onclick=()=>this.focusDevice(d.entity_id);row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this.focusDevice(d.entity_id);}};}row.append(avatar,info);card.append(row);}
       if(!devices.length)card.append(el('p',data?'暂无设备':'正在读取设备…','lx-muted'));side.append(card);
     }else{
       const card=el('section',undefined,'lx-card');card.append(el('h2','历史轨迹'));
@@ -100,10 +99,47 @@ class LocationPanel extends HTMLElement{
     }
   }
   async buildMap(target){
-    try{const c=await this._hass.callWS({type:NS+'config'}),A=await sdk(c);if(!this.isConnected||!target.isConnected)return;this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});this.layer(this.mapLayer||'standard');}
+    try{const c=await this._hass.callWS({type:NS+'config'}),A=await sdk(c);if(!this.isConnected||!target.isConnected)return;this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});this.layer(this.mapLayer||'standard');if(this.page==='live')this.syncMarkers();}
     catch(e){if(target.isConnected)this.status('地图加载失败：'+String(e.message||e));}
   }
-  destroyMap(){if(this.map){this.map.destroy();this.map=null;}}
+  destroyMap(){this.markers=new Map();this.didFit=false;if(this.map){this.map.destroy();this.map=null;}}
+  color(id){let n=0;for(const c of id)n=(n*31+c.charCodeAt(0))>>>0;return ['#3b82f6','#0ca87d','#a855f7','#e58b25','#e05e86'][n%5];}
+  // Local coordinate conversion avoids sending precise positions to the conversion service.
+  gcj(lon,lat){
+    if(lon<72.004||lon>137.8347||lat<0.8293||lat>55.8271)return [lon,lat];
+    const x=lon-105,y=lat-35,pi=Math.PI,a=6378245,ee=0.006693421622965943;
+    let dy=-100+2*x+3*y+.2*y*y+.1*x*y+.2*Math.sqrt(Math.abs(x)),dx=300+x+2*y+.1*x*x+.1*x*y+.1*Math.sqrt(Math.abs(x));
+    const common=(20*Math.sin(6*x*pi)+20*Math.sin(2*x*pi))*2/3;
+    dy+=common+(20*Math.sin(y*pi)+40*Math.sin(y*pi/3))*2/3+(160*Math.sin(y*pi/12)+320*Math.sin(y*pi/30))*2/3;
+    dx+=common+(20*Math.sin(x*pi)+40*Math.sin(x*pi/3))*2/3+(150*Math.sin(x*pi/12)+300*Math.sin(x*pi/30))*2/3;
+    const rad=lat*pi/180,sin=Math.sin(rad),magic=1-ee*sin*sin,root=Math.sqrt(magic);
+    return [lon+dx*180/(a/root*Math.cos(rad)*pi),lat+dy*180/(a*(1-ee)/(magic*root)*pi)];
+  }
+  syncMarkers(){
+    if(!this.map||this.page!=='live')return;
+    const A=this.A,map=this.map,devices=(this.data?.candidates||[]).filter(d=>d.managed&&d.enabled&&d.position);
+    if(!this.markers)this.markers=new Map();
+    const ids=new Set(devices.map(d=>d.entity_id));
+    for(const [id,m] of this.markers)if(!ids.has(id)){map.remove([m.marker,...(m.circle?[m.circle]:[])]);this.markers.delete(id);}
+    for(const d of devices){
+      const p=d.position,xy=this.gcj(p.longitude,p.latitude),color=this.color(d.entity_id);
+      let m=this.markers.get(d.entity_id);
+      if(!m){
+        const content=el('div'),dot=el('div',Array.from(d.name)[0]||'•','lx-marker');dot.style.background=color;
+        content.append(dot,el('div',d.name,'lx-marker-label'));
+        const marker=new A.Marker({position:xy,content,anchor:'center',title:d.name});
+        marker.on('click',()=>this.focusDevice(d.entity_id));map.add(marker);m={marker,circle:null,xy};this.markers.set(d.entity_id,m);
+      }
+      m.xy=xy;m.marker.setPosition(xy);
+      if(Number.isFinite(p.accuracy)&&p.accuracy>0){
+        if(!m.circle){m.circle=new A.Circle({center:xy,radius:p.accuracy,strokeColor:color,strokeOpacity:.65,strokeWeight:1,fillColor:color,fillOpacity:.12,zIndex:5});map.add(m.circle);}
+        else{m.circle.setCenter(xy);m.circle.setRadius(p.accuracy);}
+      }else if(m.circle){map.remove(m.circle);m.circle=null;}
+    }
+    if(!this.didFit&&this.markers.size){this.didFit=true;this.fitMarkers();}
+  }
+  fitMarkers(){if(!this.map||!this.markers?.size)return;const list=[...this.markers.values()];if(list.length===1){this.map.setZoomAndCenter(16,list[0].xy);return;}this.map.setFitView(list.map(x=>x.marker),false,[60,60,60,60],16);}
+  focusDevice(id){const m=this.markers?.get(id);if(m&&this.map)this.map.setZoomAndCenter(16,m.xy);}
   layer(id){this.mapLayer=id;for(const b of this.querySelectorAll('[data-layer]'))b.setAttribute('aria-pressed',String(b.dataset.layer===id));if(!this.map)return;const A=this.A;if(id==='satellite'){this.map.setMapStyle('amap://styles/normal');this.map.setLayers([new A.TileLayer.Satellite(),new A.TileLayer.RoadNet()]);}else{this.map.setLayers([new A.TileLayer()]);this.map.setMapStyle(id==='dark'?'amap://styles/dark':'amap://styles/normal');}}
   drawData(){
     const main=this.querySelector('.lx-content');main.replaceChildren();const data=this.data;
@@ -113,7 +149,7 @@ class LocationPanel extends HTMLElement{
       const managed=data.candidates.filter(d=>d.managed),removed=data.candidates.filter(d=>!d.managed),heading=el('div',undefined,'lx-title');heading.append(el('strong','已管理设备'),el('span',managed.length+' 台','lx-muted'));stack.append(heading);
       const grid=el('div',undefined,'lx-grid');
       for(const d of managed){
-        const card=el('section',undefined,'lx-card'),head=el('div',undefined,'lx-device-head'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name');avatar.append(icon('mdi:cellphone'));info.append(el('strong',d.name),el('div',d.available?'定位可用':'暂无定位','lx-muted'));
+        const card=el('section',undefined,'lx-card'),head=el('div',undefined,'lx-device-head'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name');avatar.append(icon(/ipad|tablet|平板/i.test(d.name)?'tablet':'mdi:cellphone'));avatar.style.color=this.color(d.entity_id);info.append(el('strong',d.name),el('div',d.available?'定位可用':'暂无定位','lx-muted'));
         const more=el('details',undefined,'lx-more'),summary=el('summary');summary.setAttribute('aria-label',d.name+' 更多操作');summary.append(icon('mdi:dots-horizontal'));const menu=el('div',undefined,'lx-more-panel');
         menu.append(button('移除并保留历史',()=>{more.open=false;this.refresh('remove',d.entity_id,false);}),button('移除并删除历史',()=>{more.open=false;if(confirm('确定删除该设备在本集成中的历史记录？'))this.refresh('remove',d.entity_id,true);}));more.append(summary,menu);head.append(avatar,info,more);card.append(head);
         const row=el('div',undefined,'lx-row'),label=el('label',undefined,'lx-switch'),toggle=el('input');toggle.type='checkbox';toggle.checked=d.enabled;toggle.setAttribute('aria-label',d.name+' 历史记录');toggle.onchange=()=>{const checked=toggle.checked;toggle.checked=d.enabled;this.refresh(checked?'enable':'disable',d.entity_id);};label.append(toggle);row.append(el('span','历史记录'),label);card.append(row);grid.append(card);
@@ -126,7 +162,7 @@ class LocationPanel extends HTMLElement{
       for(const [name,value] of [['历史保留','30 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['历史定位点',String(d.devices.reduce((s,x)=>s+x.count,0))],['最近清理',fmt(d.last_cleanup)],['错误次数',String(d.errors)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
       card.append(button('复制诊断',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(d,null,2));this.status('诊断已复制');}catch(e){this.status('复制失败');}}));stack.append(card);
       const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
-      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。高德安全代理及真实地图数据接口尚未接入。','lx-muted'));stack.append(about);
+      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；地址解析及高德安全代理尚未接入。','lx-muted'));stack.append(about);
     }
   }
 }
