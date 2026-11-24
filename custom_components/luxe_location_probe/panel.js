@@ -1,10 +1,10 @@
-const VERSION='0.1.3-preview';
+const VERSION='0.1.4-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
   sdkPromise=new Promise((resolve,reject)=>{
     if(window.AMap){reject(new Error('页面已加载其他高德 SDK，请刷新页面'));return;}
-    window._AMapSecurityConfig={securityJsCode:config.security_code};
+    window._AMapSecurityConfig={serviceHost:new URL(config.proxy_path,location.origin).href};
     const s=document.createElement('script');
     const timer=setTimeout(()=>{s.remove();reject(new Error('SDK 加载超时'));},20000);
     s.src='https://webapi.amap.com/maps?v=2.0&key='+encodeURIComponent(config.map_key);
@@ -84,7 +84,7 @@ class LocationPanel extends HTMLElement{
     const data=this.data,devices=(data?.candidates||[]).filter(d=>d.managed);
     if(this.page==='live'){
       const card=el('section',undefined,'lx-card'),head=el('div',undefined,'lx-title');head.append(el('h2','设备位置'),el('span',devices.length+' 台','lx-muted'));card.append(head);
-      for(const d of devices){const row=el('div',undefined,'lx-list-row'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name');avatar.append(icon(/ipad|tablet|平板/i.test(d.name)?'tablet':'mdi:cellphone'));avatar.style.color=this.color(d.entity_id);info.append(el('strong',d.name));const p=d.position;info.append(el('div',p?(p.accuracy==null?'定位可用':'定位精度 '+Math.round(p.accuracy)+' m'):(!d.enabled?'历史记录未开启 · 未展示位置':'暂无定位'),'lx-muted'));if(p){info.append(el('div',fmt(p.updated_at),'lx-muted'));row.dataset.focus=d.entity_id;row.tabIndex=0;row.setAttribute('role','button');row.onclick=()=>this.focusDevice(d.entity_id);row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this.focusDevice(d.entity_id);}};}row.append(avatar,info);card.append(row);}
+      for(const d of devices){const row=el('div',undefined,'lx-list-row'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name');avatar.append(icon(/ipad|tablet|平板/i.test(d.name)?'tablet':'mdi:cellphone'));avatar.style.color=this.color(d.entity_id);info.append(el('strong',d.name));const p=d.position;info.append(el('div',p?(p.accuracy==null?'定位可用':'定位精度 '+Math.round(p.accuracy)+' m'):(!d.enabled?'历史记录未开启 · 未展示位置':'暂无定位'),'lx-muted'));if(p){const addr=el('div','地址解析中…','lx-muted');info.append(addr);this.resolveAddress(d.entity_id,undefined,addr);info.append(el('div',fmt(p.updated_at),'lx-muted'));row.dataset.focus=d.entity_id;row.tabIndex=0;row.setAttribute('role','button');row.onclick=()=>this.focusDevice(d.entity_id);row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();this.focusDevice(d.entity_id);}};}row.append(avatar,info);card.append(row);}
       if(!devices.length)card.append(el('p',data?'暂无设备':'正在读取设备…','lx-muted'));side.append(card);
     }else{
       const card=el('section',undefined,'lx-card');card.append(el('h2','历史轨迹'));
@@ -105,6 +105,12 @@ class LocationPanel extends HTMLElement{
     catch(e){if(target.isConnected)this.status('地图加载失败：'+String(e.message||e));}
   }
   destroyMap(){this.historyOverlays=[];this.markers=new Map();this.didFit=false;if(this.map){this.map.destroy();this.map=null;}}
+  async resolveAddress(entity,recorded_at,target){
+    try{
+      const r=await this._hass.callWS({type:NS+'address',entity_id:entity,...(recorded_at===undefined?{}:{recorded_at})});
+      if(target.isConnected)target.textContent=r.address||'地址暂不可用';
+    }catch(e){if(target.isConnected)target.textContent='地址暂不可用';}
+  }
   async loadHistory(){
     const select=this.querySelector('.lx-side select'),day=this.querySelector('.lx-side input[type=date]'),timeline=this.querySelector('#history-timeline');
     if(!select||!day||!timeline)return;
@@ -123,7 +129,7 @@ class LocationPanel extends HTMLElement{
       const more=button('显示更多',()=>append());
       const append=()=>{more.remove();for(const p of r.points.slice(shown,shown+50)){
         const row=button('',()=>{if(this.map)this.map.setZoomAndCenter(17,this.gcj(p.longitude,p.latitude));},'lx-list-row');
-        row.style.width='100%';row.style.textAlign='left';row.append(el('span',fmt(p.recorded_at)),el('span',p.accuracy==null?'精度未知':Math.round(p.accuracy)+' m','lx-muted'));timeline.append(row);
+        row.style.width='100%';row.style.textAlign='left';row.append(el('span',fmt(p.recorded_at)),el('span',p.accuracy==null?'精度未知':Math.round(p.accuracy)+' m','lx-muted'));const addr=el('div','','lx-muted');const original=row.onclick;row.onclick=()=>{original();this.resolveAddress(select.value,p.recorded_at,addr);};timeline.append(row,addr);
       }shown+=50;if(shown<r.points.length)timeline.append(more);};append();
     }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),el('p','查询失败：'+String(e.message||e),'lx-muted'));}
   }
@@ -197,7 +203,7 @@ class LocationPanel extends HTMLElement{
       for(const [name,value] of [['历史保留','30 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['历史定位点',String(d.devices.reduce((s,x)=>s+x.count,0))],['最近清理',fmt(d.last_cleanup)],['错误次数',String(d.errors)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
       card.append(button('复制诊断',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(d,null,2));this.status('诊断已复制');}catch(e){this.status('复制失败');}}));stack.append(card);
       const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
-      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；历史轨迹已接入；地址解析及高德安全代理尚未接入。','lx-muted'));stack.append(about);
+      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；地址按需通过高德解析，缓存于 HA 内存；地图安全代理使用短期会话路径。','lx-muted'));stack.append(about);
     }
   }
 }

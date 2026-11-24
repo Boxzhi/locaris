@@ -1,4 +1,11 @@
 from pathlib import Path
+import asyncio
+import math
+import secrets
+import time
+from aiohttp import web
+from homeassistant.components.http import HomeAssistantView
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from datetime import datetime, timedelta, timezone
 from .location_store import now_ms, WINDOW
 import voluptuous as vol
@@ -16,7 +23,17 @@ def ws_config(hass, connection, msg):
     if not data:
         connection.send_error(msg["id"], "not_loaded", "Probe not loaded")
         return
-    connection.send_result(msg["id"], {"map_key":data["map_key"], "security_code":data["security_code"]})
+    state = hass.data[DOMAIN]
+    sessions = state.setdefault("proxy_sessions", {})
+    now = time.monotonic()
+    for token in list(sessions):
+        if sessions[token]["expires"] <= now:
+            sessions.pop(token)
+    if len(sessions) >= 64:
+        sessions.pop(next(iter(sessions)))
+    token = secrets.token_urlsafe(32)
+    sessions[token] = {"expires":now+43200,"times":[],"user":connection.user.id}
+    connection.send_result(msg["id"], {"map_key":data["map_key"],"proxy_path":"/api/luxe_location/"+token+"/_AMapService"})
 @websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove"]), vol.Optional("entity_id"): str, vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -36,6 +53,11 @@ async def ws_storage(hass, connection, msg):
             await store.enable(msg.get("entity_id",""), msg["import_history"])
         elif action == "disable":
             await store.disable(msg.get("entity_id",""))
+        if action in ("remove","disable"):
+            cache = hass.data[DOMAIN].get("address_cache",{})
+            for key in list(cache):
+                if key[0] == msg.get("entity_id"):
+                    cache.pop(key,None)
         devices = []
         for entity in sorted(store.managed | store.excluded):
             state = hass.states.get(entity)
@@ -76,6 +98,112 @@ async def ws_history(hass, connection, msg):
         rows = await store.run(read)
     connection.send_result(msg["id"], {"points":rows[:10000],"truncated":len(rows)>10000})
 
+def gcj(lon, lat):
+    if not (72.004 <= lon <= 137.8347 and .8293 <= lat <= 55.8271):
+        return lon, lat
+    x,y = lon-105,lat-35
+    pi,a,ee = math.pi,6378245,.006693421622965943
+    dy=-100+2*x+3*y+.2*y*y+.1*x*y+.2*math.sqrt(abs(x))
+    dx=300+x+2*y+.1*x*x+.1*x*y+.1*math.sqrt(abs(x))
+    common=(20*math.sin(6*x*pi)+20*math.sin(2*x*pi))*2/3
+    dy+=common+(20*math.sin(y*pi)+40*math.sin(y*pi/3))*2/3+(160*math.sin(y*pi/12)+320*math.sin(y*pi/30))*2/3
+    dx+=common+(20*math.sin(x*pi)+40*math.sin(x*pi/3))*2/3+(150*math.sin(x*pi/12)+300*math.sin(x*pi/30))*2/3
+    rad=lat*pi/180
+    magic=1-ee*math.sin(rad)**2
+    root=math.sqrt(magic)
+    return lon+dx*180/(a/root*math.cos(rad)*pi),lat+dy*180/(a*(1-ee)/(magic*root)*pi)
+
+class MapProxy(HomeAssistantView):
+    url = "/api/luxe_location/{token}/_AMapService/{path:.*}"
+    name = "api:luxe_location:map_proxy"
+    requires_auth = False
+
+    async def get(self, request, token, path):
+        hass = request.app["hass"]
+        state = hass.data.get(DOMAIN, {})
+        data = state.get("active")
+        session = state.get("proxy_sessions", {}).get(token)
+        now = time.monotonic()
+        if not data or not session or session["expires"] <= now:
+            raise web.HTTPUnauthorized()
+        user = await hass.auth.async_get_user(session["user"])
+        if not user or not user.is_admin or not user.is_active:
+            raise web.HTTPForbidden()
+        # Explicit endpoints only. No arbitrary upstream paths or redirect following.
+        allowed = {"v4/map/styles":"https://webapi.amap.com/v4/map/styles",
+                   "v3/log/init":"https://restapi.amap.com/v3/log/init"}
+        target = allowed.get(path)
+        if not target:
+            raise web.HTTPForbidden()
+        if len(request.query_string)>8192:
+            raise web.HTTPBadRequest()
+        times = session["times"]
+        times[:] = [t for t in times if now-t<60]
+        if len(times)>=120:
+            raise web.HTTPTooManyRequests()
+        times.append(now)
+        params = [(k,v) for k,v in request.query.items() if k.lower() not in ("key","jscode")]
+        params.extend([("key",data["map_key"]),("jscode",data["security_code"])])
+        try:
+            async with async_get_clientsession(hass).get(target,params=params,allow_redirects=False,timeout=15) as resp:
+                if resp.status!=200:
+                    return web.Response(status=502)
+                body=await resp.content.read(4*1024*1024+1)
+                if len(body)>4*1024*1024:
+                    return web.Response(status=502)
+                return web.Response(body=body,content_type=resp.content_type,headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer"})
+        except Exception:
+            return web.Response(status=502)
+
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN+"/address",vol.Required("entity_id"):str,vol.Optional("recorded_at"):int})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_address(hass,connection,msg):
+    state=hass.data.get(DOMAIN,{})
+    store=state.get("store")
+    entity=msg["entity_id"]
+    if not store or not store.ready or entity not in store.managed:
+        connection.send_error(msg["id"],"invalid_device","Device not managed")
+        return
+    # Resolve only existing authorized device positions, never arbitrary coordinates.
+    async with store.lock:
+        if "recorded_at" in msg:
+            row=await store.run(lambda c:c.execute("SELECT longitude,latitude FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
+            coords=tuple(row) if row else None
+        else:
+            p=position(hass.states.get(entity)) if entity in store.devices else None
+            coords=(p[1],p[0]) if p else None
+    if not coords:
+        connection.send_result(msg["id"],{"address":None})
+        return
+    lon,lat=gcj(*coords)
+    # Cache only in memory: no extra durable location history or orphaned address rows.
+    cache=state.setdefault("address_cache",{})
+    lock=state.setdefault("address_lock",asyncio.Lock())
+    key=(entity,round(lon,4),round(lat,4))
+    async with lock:
+        now=time.monotonic()
+        if key in cache and now-cache[key][0]<86400:
+            connection.send_result(msg["id"],{"address":cache[key][1]})
+            return
+        if now-state.get("last_address_request",-1000)<1:
+            connection.send_result(msg["id"],{"address":None})
+            return
+        state["last_address_request"]=now
+        address=None
+        try:
+            async with async_get_clientsession(hass).get("https://restapi.amap.com/v3/geocode/regeo",params={"key":state["active"]["service_key"],"location":f"{lon:.6f},{lat:.6f}","extensions":"base"},timeout=10,allow_redirects=False) as resp:
+                result=await resp.json(content_type=None)
+                if result.get("status")=="1":
+                    address=result.get("regeocode",{}).get("formatted_address")
+        except Exception:
+            pass
+        if isinstance(address,str) and address and entity in store.managed:
+            if len(cache)>=2048:
+                cache.pop(next(iter(cache)))
+            cache[key]=(now,address)
+        connection.send_result(msg["id"],{"address":address if isinstance(address,str) else None})
+
 async def async_setup(hass, config):
     return True
 async def async_setup_entry(hass, entry):
@@ -85,16 +213,22 @@ async def async_setup_entry(hass, entry):
         websocket_api.async_register_command(hass, ws_config)
         websocket_api.async_register_command(hass, ws_storage)
         websocket_api.async_register_command(hass, ws_history)
+        websocket_api.async_register_command(hass, ws_address)
+        hass.http.register_view(MapProxy())
         state["registered"] = True
     store = Store(hass)
     await store.start()
     state["store"] = store
     state["active"] = dict(entry.data)
-    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.3-preview", require_admin=True, embed_iframe=True)
+    state["proxy_sessions"] = {}
+    state["address_cache"] = {}
+    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.4-preview", require_admin=True, embed_iframe=True)
     return True
 async def async_unload_entry(hass, entry):
     frontend.async_remove_panel(hass, PANEL)
     hass.data[DOMAIN].pop("active",None)
+    hass.data[DOMAIN].pop("proxy_sessions",None)
+    hass.data[DOMAIN].pop("address_cache",None)
     store = hass.data[DOMAIN].pop("store",None)
     if store:
         await store.stop()
