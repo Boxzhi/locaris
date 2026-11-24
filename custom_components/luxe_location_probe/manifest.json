@@ -1,12 +1,13 @@
 {
   "domain": "luxe_location_probe",
   "name": "LUXE Location Map Probe",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "config_flow": true,
   "dependencies": [
     "frontend",
     "panel_custom",
-    "websocket_api"
+    "websocket_api",
+    "recorder"
   ],
   "iot_class": "cloud_polling",
   "requirements": [],

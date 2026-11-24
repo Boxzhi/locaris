@@ -1,0 +1,254 @@
+"""Opt-in location storage probe. No active location requests."""
+import asyncio
+from contextlib import closing
+from datetime import datetime, timedelta, timezone
+import logging
+import math
+from pathlib import Path
+import sqlite3
+import time
+
+from homeassistant.core import callback
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+
+_LOGGER = logging.getLogger(__name__)
+WINDOW = 30 * 86400 * 1000
+
+def now_ms():
+    return int(time.time() * 1000)
+
+def position(state):
+    if state is None or state.state in ("unknown", "unavailable"):
+        return None
+    a = state.attributes
+    if a.get("source_type") != "gps":
+        return None
+    lat, lon, acc = a.get("latitude"), a.get("longitude"), a.get("gps_accuracy")
+    valid = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+    if not valid(lat) or not valid(lon) or not -90 <= lat <= 90 or not -180 <= lon <= 180:
+        return None
+    return (float(lat), float(lon), float(acc) if valid(acc) and acc >= 0 else None)
+
+def point(state):
+    p = position(state)
+    if p is None:
+        return None
+    return (int(state.last_updated.timestamp() * 1000), *p)
+
+class Store:
+    def __init__(self, hass):
+        self.hass = hass
+        self.path = Path(hass.config.path("luxe_location", "location.db"))
+        self.lock = asyncio.Lock()
+        self.devices = set()
+        self.unsub = None
+        self.timer = None
+        self.active = True
+        self.ready = False
+        self.tasks = set()
+        self.last_cleanup = None
+        self.errors = 0
+
+    def db(self, fn, *args):
+        with closing(sqlite3.connect(self.path, timeout=10)) as con:
+            con.row_factory = sqlite3.Row
+            con.execute("PRAGMA foreign_keys=ON")
+            con.execute("PRAGMA secure_delete=ON")
+            with con:
+                return fn(con, *args)
+
+    async def run(self, fn, *args):
+        return await self.hass.async_add_executor_job(self.db, fn, *args)
+
+    def initialize(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(self.path, timeout=10)) as con:
+            con.execute("PRAGMA journal_mode=WAL")
+            con.execute("PRAGMA foreign_keys=ON")
+            con.execute("PRAGMA secure_delete=ON")
+            with con:
+                con.executescript("""
+                    CREATE TABLE IF NOT EXISTS probe_devices (
+                      entity_id TEXT PRIMARY KEY,
+                      consent_at INTEGER NOT NULL,
+                      import_from INTEGER NOT NULL,
+                      history_cursor INTEGER NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS probe_locations (
+                      entity_id TEXT NOT NULL REFERENCES probe_devices(entity_id) ON DELETE CASCADE,
+                      recorded_at INTEGER NOT NULL,
+                      latitude REAL NOT NULL,
+                      longitude REAL NOT NULL,
+                      accuracy REAL,
+                      source TEXT NOT NULL,
+                      PRIMARY KEY(entity_id, recorded_at)
+                    );
+                    CREATE INDEX IF NOT EXISTS probe_location_time ON probe_locations(recorded_at);
+                """)
+                return [r[0] for r in con.execute("SELECT entity_id FROM probe_devices")]
+
+    async def start(self):
+        self.devices = set(await self.hass.async_add_executor_job(self.initialize))
+        self.listen()
+        self.timer = async_track_time_interval(self.hass, self.periodic, timedelta(hours=1))
+        await self.cleanup()
+        self.ready = True
+        for entity in sorted(self.devices):
+            self.spawn(self.backfill(entity))
+
+    @callback
+    def spawn(self, coro):
+        task = self.hass.async_create_task(coro)
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    @callback
+    def listen(self):
+        if self.unsub:
+            self.unsub()
+            self.unsub = None
+        if self.devices:
+            self.unsub = async_track_state_change_event(self.hass, list(self.devices), self.changed)
+
+    @callback
+    def changed(self, event):
+        if not self.active or not self.ready:
+            return
+        entity = event.data["entity_id"]
+        new, old = event.data.get("new_state"), event.data.get("old_state")
+        p = point(new)
+        # Restored state or first appearance after restart is not evidence of a fresh GPS sample.
+        if old is None or p is None or position(old) == position(new):
+            return
+        self.spawn(self.write(entity, p))
+
+    @staticmethod
+    def insert(con, entity, rows, source, cursor=None):
+        device = con.execute("SELECT import_from FROM probe_devices WHERE entity_id=?", (entity,)).fetchone()
+        if device is None:
+            return 0
+        now = now_ms()
+        cutoff = max(now - WINDOW, device["import_from"])
+        before = con.total_changes
+        con.executemany("INSERT OR IGNORE INTO probe_locations VALUES (?,?,?,?,?,?)",
+                        [(entity, *p, source) for p in rows if cutoff <= p[0] <= now])
+        count = con.total_changes - before
+        if cursor is not None:
+            con.execute("UPDATE probe_devices SET history_cursor=MAX(history_cursor,?) WHERE entity_id=?", (cursor, entity))
+        return count
+
+    async def write(self, entity, p):
+        try:
+            async with self.lock:
+                if self.active and entity in self.devices:
+                    await self.run(self.insert, entity, [p], "state_change")
+        except Exception:
+            self.errors += 1
+            _LOGGER.warning("Location probe write failed (no coordinates logged)")
+
+    async def enable(self, entity, import_history):
+        state = self.hass.states.get(entity)
+        if not entity.startswith("device_tracker.") or state is None or state.attributes.get("source_type") != "gps":
+            raise ValueError("not_gps")
+        async with self.lock:
+            if not self.active:
+                raise ValueError("not_loaded")
+            now = now_ms()
+            cutoff = now - WINDOW if import_history else now
+            await self.run(lambda c: c.execute("INSERT OR IGNORE INTO probe_devices VALUES (?,?,?,?)",
+                                                (entity, now, cutoff, cutoff)))
+            self.devices.add(entity)
+            self.listen()
+        self.spawn(self.backfill(entity))
+
+    async def disable(self, entity):
+        async with self.lock:
+            await self.run(lambda c: c.execute("DELETE FROM probe_devices WHERE entity_id=?", (entity,)))
+            self.devices.discard(entity)
+            self.listen()
+            await self.hass.async_add_executor_job(self.checkpoint)
+
+    async def backfill(self, entity):
+        try:
+            from homeassistant.components.recorder import get_instance, history
+            async with self.lock:
+                if not self.active or entity not in self.devices:
+                    return
+                row = await self.run(lambda c: tuple(c.execute("SELECT consent_at,import_from,history_cursor FROM probe_devices WHERE entity_id=?", (entity,)).fetchone()))
+            consent, earliest, cursor = row
+            end = now_ms() - 120000
+            start = max(earliest, cursor - 300000, now_ms() - WINDOW)
+            # Query in bounded daily windows, preserving original HA record timestamps.
+            while start < end and self.active:
+                stop = min(start + 86400000, end)
+                begin_dt = datetime.fromtimestamp(start / 1000, timezone.utc)
+                end_dt = datetime.fromtimestamp(stop / 1000, timezone.utc)
+                def read():
+                    return history.get_significant_states(self.hass, begin_dt, end_dt, [entity],
+                        include_start_time_state=False, significant_changes_only=False,
+                        minimal_response=False, no_attributes=False)
+                result = await get_instance(self.hass).async_add_executor_job(read)
+                rows = []
+                prev = None
+                for state in result.get(entity, []):
+                    p = point(state)
+                    if p is None:
+                        continue
+                    if prev is None or p[1:] != prev:
+                        rows.append(p)
+                    prev = p[1:]
+                async with self.lock:
+                    if not self.active or entity not in self.devices:
+                        return
+                    current = await self.run(lambda c: c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?", (entity,)).fetchone())
+                    if current is None or current[0] != consent:
+                        return
+                    await self.run(self.insert, entity, rows, "recorder", stop)
+                start = stop
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.errors += 1
+            _LOGGER.warning("Location probe Recorder import failed (no coordinates logged)")
+
+    def checkpoint(self):
+        with closing(sqlite3.connect(self.path, timeout=10)) as con:
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    async def cleanup(self):
+        async with self.lock:
+            cutoff = now_ms() - WINDOW
+            await self.run(lambda c: c.execute("DELETE FROM probe_locations WHERE recorded_at < ?", (cutoff,)))
+            await self.hass.async_add_executor_job(self.checkpoint)
+            self.last_cleanup = now_ms()
+
+    async def periodic(self, _now):
+        if self.active:
+            await self.cleanup()
+            for entity in sorted(self.devices):
+                self.spawn(self.backfill(entity))
+
+    async def diagnostics(self):
+        def read(con):
+            rows = con.execute("""SELECT d.entity_id,COUNT(l.recorded_at) AS count,
+                    MIN(l.recorded_at) AS oldest,MAX(l.recorded_at) AS newest
+                FROM probe_devices d LEFT JOIN probe_locations l
+                ON d.entity_id=l.entity_id AND l.recorded_at>=?
+                GROUP BY d.entity_id""", (now_ms() - WINDOW,)).fetchall()
+            return [dict(row) for row in rows]
+        async with self.lock:
+            rows = await self.run(read)
+            size = await self.hass.async_add_executor_job(lambda: sum(p.stat().st_size for p in self.path.parent.glob("location.db*") if p.is_file()))
+        return {"retention_days":30,"database_bytes":size,"last_cleanup":self.last_cleanup,"errors":self.errors,"devices":rows}
+
+    async def stop(self):
+        self.active = False
+        self.ready = False
+        if self.unsub:
+            self.unsub()
+        if self.timer:
+            self.timer()
+        if self.tasks:
+            await asyncio.gather(*list(self.tasks), return_exceptions=True)
+        async with self.lock:
+            await self.hass.async_add_executor_job(self.checkpoint)
