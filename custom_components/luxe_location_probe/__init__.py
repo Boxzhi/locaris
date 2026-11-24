@@ -59,7 +59,7 @@ async def async_setup_entry(hass, entry):
     await store.start()
     state["store"] = store
     state["active"] = dict(entry.data)
-    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.0-preview", require_admin=True, embed_iframe=True)
+    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.1-preview", require_admin=True, embed_iframe=True)
     return True
 async def async_unload_entry(hass, entry):
     frontend.async_remove_panel(hass, PANEL)

@@ -1,4 +1,4 @@
-const VERSION='0.1.0-preview';
+const VERSION='0.1.1-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -15,51 +15,56 @@ function sdk(config){
   return sdkPromise;
 }
 
-const TABS=[['live','实时位置'],['history','历史轨迹'],['devices','设备管理'],['settings','设置']];
+
+const TABS=[['live','实时位置','mdi:map-marker-radius-outline'],['history','历史轨迹','mdi:map-marker-path'],['devices','设备管理','mdi:cellphone'],['settings','设置','mdi:cog-outline']];
 const NS='luxe_location_probe/';
 const fmt=t=>t?new Date(t).toLocaleString('zh-CN',{hour12:false}):'—';
 const el=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+const icon=name=>{const paths={'mdi:menu':'M4 6h16M4 12h16M4 18h16','mdi:map-marker-radius-outline':'M12 21s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z M12 6a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:map-marker-path':'M5 6a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M19 14a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M7 8h7a3 3 0 0 1 0 6H8a3 3 0 0 0 0 6h7','mdi:cellphone':'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z M10 18h4','mdi:cog-outline':'M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M19 5l-2 2 M7 17l-2 2','mdi:dots-horizontal':'M5 12h.1M12 12h.1M19 12h.1'};const ns='http://www.w3.org/2000/svg',e=document.createElementNS(ns,'svg'),p=document.createElementNS(ns,'path');e.setAttribute('viewBox','0 0 24 24');e.setAttribute('width','22');e.setAttribute('height','22');e.setAttribute('aria-hidden','true');p.setAttribute('d',paths[name]||paths['mdi:cellphone']);p.setAttribute('fill','none');p.setAttribute('stroke','currentColor');p.setAttribute('stroke-width',name==='mdi:dots-horizontal'?'4':'1.8');p.setAttribute('stroke-linecap','round');p.setAttribute('stroke-linejoin','round');e.append(p);return e;};
+const button=(text,fn,cls)=>{const b=el('button',text,cls);b.type='button';b.onclick=fn;return b;};
 class LocationPanel extends HTMLElement{
   set hass(v){this._hass=v;if(this.isConnected&&!this.started)this.start();}
-  connectedCallback(){this.page='live';this.render();if(this._hass)this.start();}
-  disconnectedCallback(){this.epoch=(this.epoch||0)+1;this.started=false;clearInterval(this.timer);this.timer=null;this.destroyMap();}
+  connectedCallback(){this.page='live';this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
+  disconnectedCallback(){this.epoch++;this.started=false;clearInterval(this.timer);this.destroyMap();}
   render(){
     this.innerHTML=`<style>
-    luxe-location-probe{display:block;height:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--primary-background-color,#131820);-webkit-text-size-adjust:100%;text-size-adjust:100%}
-    .lx-shell{height:100%;box-sizing:border-box;display:flex;flex-direction:column;max-width:1280px;margin:auto;padding:16px;gap:12px;overflow:auto}
-    .lx-head,.lx-tabs,.lx-row,.lx-actions{display:flex;align-items:center;gap:10px}
-    .lx-head h1{font-size:22px;margin:0;font-weight:650}.lx-tabs{flex-wrap:wrap;gap:6px}.lx-tabs button{flex:1;white-space:nowrap}
-    luxe-location-probe button{font:inherit;color:inherit;cursor:pointer;background:var(--card-background-color,#202733);border:1px solid var(--divider-color,#394453);border-radius:9px;padding:9px 12px}
-    luxe-location-probe button[aria-selected=true]{background:#2563eb;color:white;border-color:#2563eb}
+    luxe-location-probe{display:block;height:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--primary-background-color,#131820);-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
+    luxe-location-probe *{box-sizing:border-box}.lx-shell{height:100%;display:flex;flex-direction:column;gap:10px;padding:10px;overflow:hidden}
+    .lx-head,.lx-tabs,.lx-row,.lx-actions,.lx-title{display:flex;align-items:center;gap:10px}
+    .lx-head{flex:none;min-height:44px}.lx-head h1{font-size:21px;margin:0;font-weight:650;flex:1}.lx-tabs{gap:4px;flex:none}
+    luxe-location-probe button{font:inherit;color:inherit;cursor:pointer;background:transparent;border:0;border-radius:9px;padding:8px 12px}
+    luxe-location-probe button:focus-visible{outline:2px solid var(--lx-accent);outline-offset:1px}
     luxe-location-probe button:disabled{opacity:.5;cursor:default}
-    .lx-content{min-width:0;display:flex;flex-direction:column;gap:10px}
-    .lx-card{background:var(--card-background-color,#202733);border:1px solid var(--divider-color,#394453);border-radius:12px;padding:14px;min-width:0}
-    .lx-card h2{font-size:17px;margin:0 0 10px}.lx-muted{color:var(--secondary-text-color,#a6afbd);font-size:13px;overflow-wrap:anywhere}
-    .lx-row{justify-content:space-between;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--divider-color,#394453)}.lx-row:last-child{border:0}.lx-actions{flex-wrap:wrap}
-    .lx-map{height:55vh;height:55dvh;min-height:260px;position:relative;isolation:isolate;overflow:hidden;border-radius:12px}.lx-map-inner{position:absolute;inset:0;touch-action:none}
-    .lx-error{color:#f59e0b;min-height:0}.lx-switch{display:flex;align-items:center;gap:8px}.lx-switch input{width:18px;height:18px;accent-color:#2563eb}
-    @media(max-width:600px){.lx-shell{padding:10px;gap:10px}.lx-tabs button{padding:8px 5px;font-size:13px}.lx-card{padding:11px}.lx-head h1{font-size:20px}.lx-map{height:48dvh}}
-    </style><div class="lx-shell"><header class="lx-head"><button id="menu" aria-label="打开侧边栏">☰</button><h1>位置中心</h1></header><nav class="lx-tabs" aria-label="位置中心页面"></nav><div class="lx-error" role="status"></div><main class="lx-content"></main></div>`;
-    this.querySelector('#menu').onclick=()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true}));
-    for(const [id,label] of TABS){const b=el('button',label);b.dataset.page=id;b.onclick=()=>this.switchPage(id);this.querySelector('.lx-tabs').append(b);}
+    .lx-tabs button{display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;color:var(--secondary-text-color,#a6afbd)}
+    .lx-tabs button[aria-selected=true]{color:var(--lx-accent);background:var(--secondary-background-color,#293441)}
+    .lx-tabs ha-icon{--mdc-icon-size:21px}.lx-menu ha-icon{--mdc-icon-size:24px}
+    .lx-content{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain}
+    .lx-card{background:var(--lx-card);border:1px solid var(--lx-line);border-radius:14px;padding:14px;min-width:0}
+    .lx-card h2{font-size:16px;margin:0;font-weight:650}.lx-muted{color:var(--secondary-text-color,#a6afbd);font-size:12px;overflow-wrap:anywhere}
+    .lx-title{justify-content:space-between;margin-bottom:10px}.lx-row{justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-row:last-child{border:0}.lx-actions{flex-wrap:wrap}
+    .lx-map-layout{display:grid;grid-template-columns:minmax(260px,320px) minmax(0,1fr);gap:10px;height:100%;min-height:300px}
+    .lx-side{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto}.lx-map{position:relative;isolation:isolate;overflow:hidden;border-radius:14px;min-height:260px;background:var(--lx-card)}
+    .lx-map-inner{position:absolute;inset:0;touch-action:none}.lx-map-tools{position:absolute;right:10px;top:10px;z-index:5;display:flex;flex-direction:column;gap:4px;background:var(--lx-card);border-radius:10px;padding:4px;box-shadow:0 2px 12px #0002}
+    .lx-map-tools button{padding:7px;font-size:12px}.lx-map-tools button[aria-pressed=true]{color:var(--lx-accent)}
+    .lx-error{color:#e7a23b;font-size:13px;flex:none}.lx-error:empty{display:none}.lx-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.lx-stack{display:flex;flex-direction:column;gap:10px;max-width:1000px;margin:auto}
+    .lx-device-head{display:flex;align-items:center;gap:10px}.lx-avatar{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--secondary-background-color,#293441);color:var(--lx-accent);flex:none}.lx-name{flex:1;min-width:0;overflow-wrap:anywhere}
+    .lx-switch{display:flex;align-items:center;gap:8px;cursor:pointer}.lx-switch input{appearance:none;-webkit-appearance:none;width:42px;height:24px;border-radius:20px;background:#78838e;position:relative;cursor:pointer;margin:0}.lx-switch input:checked{background:var(--lx-accent)}.lx-switch input:before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;background:white;border-radius:50%;transition:transform .15s}.lx-switch input:checked:before{transform:translateX(18px)}
+    .lx-more{position:relative}.lx-more summary{cursor:pointer;list-style:none;padding:8px}.lx-more summary::-webkit-details-marker{display:none}.lx-more-panel{position:absolute;right:0;top:100%;z-index:10;min-width:180px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:10px;padding:5px;box-shadow:0 6px 20px #0003}.lx-more-panel button{display:block;width:100%;text-align:left;white-space:nowrap}
+    .lx-field{font:inherit;width:100%;padding:8px;border:1px solid var(--lx-line);border-radius:8px;background:var(--lx-card);color:inherit}.lx-sub{margin:8px 0 0}.lx-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-list-row:last-child{border:0}
+    @media(max-width:760px){.lx-head h1{font-size:20px}.lx-tabs{order:5;justify-content:space-around;border-top:1px solid var(--lx-line);padding:5px 0 env(safe-area-inset-bottom,0px)}.lx-tabs button{flex:1;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px}.lx-tabs ha-icon{--mdc-icon-size:23px}.lx-grid{grid-template-columns:1fr}.lx-map-layout{display:flex;flex-direction:column;height:auto;min-height:0}.lx-map{order:-1;flex:none;height:48vh;height:48dvh;min-height:250px}.lx-side{overflow:visible}.lx-card{padding:11px}.lx-shell{padding-bottom:0}}
+    </style><div class="lx-shell"><header class="lx-head"><button id="menu" class="lx-menu" aria-label="打开侧边栏"></button><h1>位置中心</h1><button id="settings-shortcut" aria-label="设置"></button></header><nav class="lx-tabs" aria-label="位置中心页面"></nav><div class="lx-error" role="status"></div><main class="lx-content"></main></div>`;
+    this.querySelector('#menu').append(icon('mdi:menu'));this.querySelector('#menu').onclick=()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true}));
+    this.querySelector('#settings-shortcut').append(icon('mdi:cog-outline'));this.querySelector('#settings-shortcut').onclick=()=>this.switchPage('settings');
+    for(const [id,label,glyph] of TABS){const b=button(undefined,()=>this.switchPage(id));b.append(icon(glyph),el('span',label));b.dataset.page=id;this.querySelector('.lx-tabs').append(b);}
     this.switchPage(this.page);
   }
-  async start(){
-    if(this.started)return;this.started=true;
-    if(!this._hass.user?.is_admin){this.status('仅管理员可访问');return;}
-    if(this.page==='live'||this.page==='history')this.switchPage(this.page);
-    await this.refresh();
-    if(this.isConnected&&this.started)this.timer=setInterval(()=>{if(!document.hidden&&!this.busy)this.refresh();},60000);
-  }
+  async start(){if(this.started)return;this.started=true;const epoch=this.epoch;if(!this._hass.user?.is_admin){this.status('仅管理员可访问');return;}if(this.page==='live'||this.page==='history')this.switchPage(this.page);await this.refresh();if(this.isConnected&&epoch===this.epoch)this.timer=setInterval(()=>{if(!document.hidden&&!this.busy)this.refresh();},60000);}
   status(s=''){const n=this.querySelector('.lx-error');if(n)n.textContent=s;}
   async refresh(action='list',entity_id,delete_history=false){
     if(this.busy||!this._hass?.user?.is_admin)return;
-    this.busy=true;const epoch=this.epoch;
-    try{
-      const r=await this._hass.callWS({type:NS+'storage',action,...(entity_id?{entity_id}:{}),import_history:true,delete_history});
-      if(!this.isConnected||epoch!==this.epoch)return;
-      this.data=r;this.status();if(this.page==='devices'||this.page==='settings')this.drawData();
-    }catch(e){if(this.isConnected&&epoch===this.epoch){this.status('操作失败：'+String(e.message||e));if(this.page==='devices')this.drawData();}}
+    const epoch=this.epoch;this.busy=true;
+    try{const r=await this._hass.callWS({type:NS+'storage',action,...(entity_id?{entity_id}:{}),import_history:true,delete_history});if(!this.isConnected||epoch!==this.epoch)return;this.data=r;this.status();this.updateData();}
+    catch(e){if(this.isConnected&&epoch===this.epoch){this.status('操作失败：'+String(e.message||e));this.updateData();}}
     finally{this.busy=false;}
   }
   switchPage(page){
@@ -67,49 +72,61 @@ class LocationPanel extends HTMLElement{
     for(const b of this.querySelectorAll('[data-page]'))b.setAttribute('aria-selected',String(b.dataset.page===page));
     const main=this.querySelector('.lx-content');main.replaceChildren();
     if(page==='live'||page==='history'){
-      const card=el('section',undefined,'lx-card');card.append(el('h2',page==='live'?'实时位置':'历史轨迹'));
-      card.append(el('p',page==='live'?'真实定位展示接口尚未接入，本阶段不显示模拟位置。':'历史轨迹查询接口尚未接入，已有历史数据继续保留。','lx-muted'));
-      const map=el('div',undefined,'lx-map');map.append(el('div',undefined,'lx-map-inner'));card.append(map);main.append(card);
-      const bar=el('div',undefined,'lx-actions');for(const [id,label] of [['standard','标准'],['satellite','卫星'],['dark','深色']]){const b=el('button',label);b.onclick=()=>this.layer(id);bar.append(b);}card.prepend(bar);
-      if(this._hass?.user?.is_admin)this.buildMap(map.firstChild);
+      const layout=el('div',undefined,'lx-map-layout'),side=el('aside',undefined,'lx-side'),map=el('div',undefined,'lx-map'),target=el('div',undefined,'lx-map-inner'),tools=el('div',undefined,'lx-map-tools');
+      for(const [id,label] of [['standard','标准'],['satellite','卫星'],['dark','深色']]){const b=button(label,()=>this.layer(id));b.dataset.layer=id;b.setAttribute('aria-pressed',String(id===(this.mapLayer||'standard')));tools.append(b);}
+      map.append(target,tools);layout.append(side,map);main.append(layout);this.drawSide();
+      if(this._hass?.user?.is_admin)this.buildMap(target);
     }else this.drawData();
   }
+  updateData(){if(this.page==='live'||this.page==='history')this.drawSide();else this.drawData();}
+  drawSide(){
+    const side=this.querySelector('.lx-side');if(!side)return;
+    const old=side.querySelector('select')?.value,date=side.querySelector('input[type=date]')?.value;side.replaceChildren();
+    const data=this.data,devices=(data?.candidates||[]).filter(d=>d.managed);
+    if(this.page==='live'){
+      const card=el('section',undefined,'lx-card'),head=el('div',undefined,'lx-title');head.append(el('h2','设备位置'),el('span',devices.length+' 台','lx-muted'));card.append(head);
+      for(const d of devices){const row=el('div',undefined,'lx-list-row'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name');avatar.append(icon('mdi:cellphone'));info.append(el('strong',d.name),el('div',d.available?'定位可用 · 地图接口待接入':'暂无定位','lx-muted'));row.append(avatar,info);card.append(row);}
+      if(!devices.length)card.append(el('p',data?'暂无设备':'正在读取设备…','lx-muted'));side.append(card);
+    }else{
+      const card=el('section',undefined,'lx-card');card.append(el('h2','历史轨迹'));
+      const select=el('select',undefined,'lx-field');select.setAttribute('aria-label','选择设备');
+      for(const d of devices){const opt=el('option',d.name);opt.value=d.entity_id;select.append(opt);}
+      if(devices.some(d=>d.entity_id===old))select.value=old;
+      const day=el('input',undefined,'lx-field');day.type='date';day.setAttribute('aria-label','选择日期');
+      const local=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+      const today=new Date(),min=new Date(today);min.setDate(min.getDate()-29);day.max=local(today);day.min=local(min);day.value=date||day.max;
+      const wrap=el('div',undefined,'lx-stack');wrap.append(select,day);card.append(wrap,el('p','历史轨迹查询接口待接入。','lx-muted'));side.append(card);
+      const timeline=el('section',undefined,'lx-card');timeline.append(el('h2','定位时间轴'),el('p','暂无可展示轨迹','lx-muted'));side.append(timeline);
+    }
+  }
   async buildMap(target){
-    try{
-      const c=await this._hass.callWS({type:NS+'config'});const A=await sdk(c);
-      if(!this.isConnected||!target.isConnected)return;
-      this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});
-    }catch(e){if(target.isConnected)this.status('地图加载失败：'+String(e.message||e));}
+    try{const c=await this._hass.callWS({type:NS+'config'}),A=await sdk(c);if(!this.isConnected||!target.isConnected)return;this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});this.layer(this.mapLayer||'standard');}
+    catch(e){if(target.isConnected)this.status('地图加载失败：'+String(e.message||e));}
   }
   destroyMap(){if(this.map){this.map.destroy();this.map=null;}}
-  layer(id){if(!this.map)return;const A=this.A;if(id==='satellite')this.map.setLayers([new A.TileLayer.Satellite(),new A.TileLayer.RoadNet()]);else{this.map.setLayers([new A.TileLayer()]);this.map.setMapStyle(id==='dark'?'amap://styles/dark':'amap://styles/normal');}}
+  layer(id){this.mapLayer=id;for(const b of this.querySelectorAll('[data-layer]'))b.setAttribute('aria-pressed',String(b.dataset.layer===id));if(!this.map)return;const A=this.A;if(id==='satellite'){this.map.setMapStyle('amap://styles/normal');this.map.setLayers([new A.TileLayer.Satellite(),new A.TileLayer.RoadNet()]);}else{this.map.setLayers([new A.TileLayer()]);this.map.setMapStyle(id==='dark'?'amap://styles/dark':'amap://styles/normal');}}
   drawData(){
-    const main=this.querySelector('.lx-content');main.replaceChildren();
-    const data=this.data;if(!data){main.append(el('div','正在读取设备及存储信息…','lx-card'));return;}
-    const btn=(label,fn)=>{const b=el('button',label);b.onclick=fn;return b;};
+    const main=this.querySelector('.lx-content');main.replaceChildren();const data=this.data;
+    if(!data){main.append(el('div','正在读取设备及存储信息…','lx-card'));return;}
+    const stack=el('div',undefined,'lx-stack');main.append(stack);
     if(this.page==='devices'){
-      for(const managed of [true,false]){
-        const card=el('section',undefined,'lx-card');card.append(el('h2',managed?'已管理设备':'已移除设备'));
-        const devices=data.candidates.filter(d=>d.managed===managed);
-        if(!devices.length)card.append(el('div','暂无设备','lx-muted'));
-        for(const d of devices){
-          const row=el('div',undefined,'lx-row'),info=el('div');info.append(el('strong',d.name),el('div',d.available?'定位可用':'暂无定位','lx-muted'));row.append(info);
-          const actions=el('div',undefined,'lx-actions');
-          if(managed){
-            const label=el('label',undefined,'lx-switch'),toggle=el('input');toggle.type='checkbox';toggle.checked=d.enabled;toggle.setAttribute('aria-label',d.name+' 历史记录');
-            toggle.onchange=()=>{const checked=toggle.checked;toggle.checked=d.enabled;this.refresh(checked?'enable':'disable',d.entity_id);};
-            label.append(toggle,el('span','历史记录'));actions.append(label);
-            actions.append(btn('移除',()=>this.refresh('remove',d.entity_id,false)),btn('移除并删除历史',()=>{if(confirm('确定删除该设备在本集成中的历史记录？'))this.refresh('remove',d.entity_id,true);}));
-          }else actions.append(btn('重新添加',()=>this.refresh('add',d.entity_id)));
-          row.append(actions);card.append(row);
-        }main.append(card);
+      const managed=data.candidates.filter(d=>d.managed),removed=data.candidates.filter(d=>!d.managed),heading=el('div',undefined,'lx-title');heading.append(el('strong','已管理设备'),el('span',managed.length+' 台','lx-muted'));stack.append(heading);
+      const grid=el('div',undefined,'lx-grid');
+      for(const d of managed){
+        const card=el('section',undefined,'lx-card'),head=el('div',undefined,'lx-device-head'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name');avatar.append(icon('mdi:cellphone'));info.append(el('strong',d.name),el('div',d.available?'定位可用':'暂无定位','lx-muted'));
+        const more=el('details',undefined,'lx-more'),summary=el('summary');summary.setAttribute('aria-label',d.name+' 更多操作');summary.append(icon('mdi:dots-horizontal'));const menu=el('div',undefined,'lx-more-panel');
+        menu.append(button('移除并保留历史',()=>{more.open=false;this.refresh('remove',d.entity_id,false);}),button('移除并删除历史',()=>{more.open=false;if(confirm('确定删除该设备在本集成中的历史记录？'))this.refresh('remove',d.entity_id,true);}));more.append(summary,menu);head.append(avatar,info,more);card.append(head);
+        const row=el('div',undefined,'lx-row'),label=el('label',undefined,'lx-switch'),toggle=el('input');toggle.type='checkbox';toggle.checked=d.enabled;toggle.setAttribute('aria-label',d.name+' 历史记录');toggle.onchange=()=>{const checked=toggle.checked;toggle.checked=d.enabled;this.refresh(checked?'enable':'disable',d.entity_id);};label.append(toggle);row.append(el('span','历史记录'),label);card.append(row);grid.append(card);
       }
-      main.append(el('p','仅对已有位置共享许可的设备开启历史记录。首次开启自动导入可用历史，关闭后保留已有数据。','lx-muted'));
+      if(!managed.length)grid.append(el('div','暂无设备','lx-card'));stack.append(grid);
+      const excluded=el('details',undefined,'lx-card'),summary=el('summary','已移除设备 · '+removed.length+' 台');excluded.append(summary);for(const d of removed){const row=el('div',undefined,'lx-row');row.append(el('span',d.name),button('重新添加',()=>this.refresh('add',d.entity_id)));excluded.append(row);}stack.append(excluded);
+      stack.append(el('p','首次开启历史记录自动导入可用历史；关闭后保留已有数据。仅对已有位置共享许可的设备开启记录。','lx-muted'));
     }else{
       const d=data.diagnostics,card=el('section',undefined,'lx-card');card.append(el('h2','数据存储'));
-      for(const [name,value] of [['历史保留','30天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['历史定位点',String(d.devices.reduce((s,x)=>s+x.count,0))],['最近清理',fmt(d.last_cleanup)],['错误次数',String(d.errors)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
-      card.append(btn('复制诊断',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(d,null,2));this.status('诊断已复制');}catch(e){this.status('复制失败');}}));main.append(card);
-      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','被动读取 Home Assistant 已有定位，不主动请求设备定位。高德 JS 安全码仍由管理员页面加载，安全代理尚未接入。','lx-muted'));main.append(about);
+      for(const [name,value] of [['历史保留','30 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['历史定位点',String(d.devices.reduce((s,x)=>s+x.count,0))],['最近清理',fmt(d.last_cleanup)],['错误次数',String(d.errors)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
+      card.append(button('复制诊断',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(d,null,2));this.status('诊断已复制');}catch(e){this.status('复制失败');}}));stack.append(card);
+      const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
+      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。高德安全代理及真实地图数据接口尚未接入。','lx-muted'));stack.append(about);
     }
   }
 }
