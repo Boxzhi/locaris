@@ -1,4 +1,4 @@
-const VERSION='0.1.6-preview';
+const VERSION='0.1.7-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -42,7 +42,7 @@ class LocationPanel extends HTMLElement{
     .lx-card{background:var(--lx-card);border:1px solid var(--lx-line);border-radius:14px;padding:14px;min-width:0}
     .lx-card h2{font-size:16px;margin:0;font-weight:650}.lx-muted{color:var(--secondary-text-color,#a6afbd);font-size:12px;overflow-wrap:anywhere}
     .lx-title{justify-content:space-between;margin-bottom:10px}.lx-row{justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-row:last-child{border:0}.lx-actions{flex-wrap:wrap}
-    .lx-map-layout{display:grid;grid-template-rows:minmax(0,1fr);grid-template-columns:minmax(260px,290px) minmax(0,1fr);gap:10px;height:100%;min-height:300px}
+    .lx-map-layout{display:grid;grid-template-rows:minmax(0,1fr);grid-template-columns:minmax(260px,320px) minmax(0,1fr);gap:10px;height:100%;min-height:300px}
     .lx-side{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto}.lx-map{position:relative;isolation:isolate;overflow:hidden;border-radius:14px;min-height:260px;background:var(--lx-card)}
     .lx-track-end{width:30px;height:30px;border:2px solid white;border-radius:50%;display:grid;place-items:center;color:white;font:bold 12px sans-serif;box-shadow:0 2px 6px #0005}.lx-selected-point{padding:10px;margin:8px 0;border:1px solid var(--lx-line);border-radius:9px}.lx-track-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--secondary-text-color,#a6afbd);margin-top:10px}.lx-track-legend span:before{content:'';display:inline-block;width:24px;border-top:3px solid #4387e8;vertical-align:middle;margin-right:5px}.lx-track-legend span:last-child:before{border-top-style:dashed;opacity:.65}.lx-map-inner{position:absolute;inset:0;touch-action:none}.lx-map-tools{position:absolute;right:10px;top:10px;z-index:5;display:flex;flex-direction:column;gap:4px;background:var(--lx-card);border-radius:10px;padding:4px;box-shadow:0 2px 12px #0002}
     .lx-map-tools button{padding:7px;font-size:12px}.lx-map-tools button[aria-pressed=true]{color:var(--lx-accent)}
@@ -50,7 +50,7 @@ class LocationPanel extends HTMLElement{
     .lx-device-head{display:flex;align-items:center;gap:10px}.lx-avatar{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--secondary-background-color,#293441);color:var(--lx-accent);flex:none}.lx-name{flex:1;min-width:0;overflow-wrap:anywhere}
     .lx-switch{display:flex;align-items:center;gap:8px;cursor:pointer}.lx-switch input{appearance:none;-webkit-appearance:none;width:42px;height:24px;border-radius:20px;background:#78838e;position:relative;cursor:pointer;margin:0}.lx-switch input:checked{background:var(--lx-accent)}.lx-switch input:before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;background:white;border-radius:50%;transition:transform .15s}.lx-switch input:checked:before{transform:translateX(18px)}
     .lx-more{position:relative}.lx-more summary{cursor:pointer;list-style:none;padding:8px}.lx-more summary::-webkit-details-marker{display:none}.lx-more-panel{position:absolute;right:0;top:100%;z-index:10;min-width:180px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:10px;padding:5px;box-shadow:0 6px 20px #0003}.lx-more-panel button{display:block;width:100%;text-align:left;white-space:nowrap}
-    .lx-field{font:inherit;width:100%;padding:8px;border:1px solid var(--lx-line);border-radius:8px;background:var(--lx-card);color:inherit}.lx-sub{margin:8px 0 0}.lx-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-list-row:last-child{border:0}
+    .lx-calendar-wrap{position:relative;min-width:0}.lx-date-trigger{display:flex;align-items:center;gap:8px;text-align:left}.lx-date-arrow{margin-left:auto}.lx-calendar{width:100%;margin-top:8px;padding:8px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:12px}.lx-calendar[hidden],.lx-point-address[hidden]{display:none!important}.lx-cal-header{display:flex;align-items:center;justify-content:space-between;gap:4px}.lx-cal-header button{min-height:34px;padding:4px 10px}.lx-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center;align-items:center;margin:6px 0}.lx-cal-grid button{padding:0;height:34px;min-width:0;font-size:14px;border-radius:8px}.lx-cal-grid button[aria-pressed=true]{background:var(--lx-accent);color:white}.lx-cal-grid button:disabled{opacity:.3}.lx-cal-today:not([aria-pressed=true]){color:var(--lx-accent);font-weight:bold}.lx-point-card{border-bottom:1px solid var(--lx-line);border-radius:9px;padding:3px 0}.lx-point-card:last-child{border:0}.lx-point-open{background:var(--secondary-background-color,#293441)}.lx-point-row{display:flex;width:100%;align-items:center;gap:8px;text-align:left;padding:10px 6px!important}.lx-point-row svg{flex:none;color:var(--lx-accent);width:18px;height:18px}.lx-point-time{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap}.lx-point-arrow{color:var(--secondary-text-color,#a6afbd);font-size:16px}.lx-point-address{padding:0 10px 10px 32px;font-size:13px;color:var(--secondary-text-color,#a6afbd);overflow-wrap:anywhere}.lx-field{font:inherit;width:100%;padding:8px;border:1px solid var(--lx-line);border-radius:8px;background:var(--lx-card);color:inherit}.lx-sub{margin:8px 0 0}.lx-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-list-row:last-child{border:0}
     @media(max-width:760px){.lx-menu{display:block}.lx-head h1{font-size:20px}.lx-tabs{order:5;justify-content:space-around;border-top:1px solid var(--lx-line);padding:5px 0 env(safe-area-inset-bottom,0px)}.lx-tabs button{flex:1;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px}.lx-tabs ha-icon{--mdc-icon-size:23px}.lx-grid{grid-template-columns:1fr}.lx-map-layout{display:flex;flex-direction:column;height:auto;min-height:0}.lx-map{order:-1;flex:none;height:48vh;height:48dvh;min-height:250px}.lx-side{overflow:visible}.lx-card{padding:11px}.lx-shell{padding-bottom:0}}
     </style><div class="lx-shell"><header class="lx-head"><button id="menu" class="lx-menu" aria-label="打开侧边栏"></button><h1>位置中心</h1></header><nav class="lx-tabs" aria-label="位置中心页面"></nav><div class="lx-error" role="status"></div><main class="lx-content"></main></div>`;
     this.querySelector('#menu').append(icon('mdi:menu'));this.querySelector('#menu').onclick=()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true}));
@@ -80,7 +80,7 @@ class LocationPanel extends HTMLElement{
   updateData(){if(this.page==='live'){this.drawSide();this.syncMarkers();}else if(this.page==='history'){if(!this.querySelector('.lx-side select')?.options.length)this.drawSide();}else this.drawData();}
   drawSide(){
     const side=this.querySelector('.lx-side');if(!side)return;
-    const old=side.querySelector('select')?.value,date=side.querySelector('input[type=date]')?.value;side.replaceChildren();
+    const old=side.querySelector('select')?.value,date=side.querySelector('[data-history-date]')?.value;side.replaceChildren();
     const data=this.data,devices=(data?.candidates||[]).filter(d=>d.managed);
     if(this.page==='live'){
       const card=el('section',undefined,'lx-card'),head=el('div',undefined,'lx-title');head.append(el('h2','设备位置'),el('span',devices.length+' 台','lx-muted'));card.append(head);
@@ -91,12 +91,39 @@ class LocationPanel extends HTMLElement{
       const select=el('select',undefined,'lx-field');select.setAttribute('aria-label','选择设备');
       for(const d of devices){const opt=el('option',d.name);opt.value=d.entity_id;select.append(opt);}
       if(devices.some(d=>d.entity_id===old))select.value=old;
-      const day=el('input',undefined,'lx-field');day.type='date';day.setAttribute('aria-label','选择日期');
+      const day=el('input');day.type='hidden';day.dataset.historyDate='1';
       const local=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
-      const today=new Date(),min=new Date(today);min.setDate(min.getDate()-29);day.max=local(today);day.min=local(min);day.value=date||day.max;
-      const wrap=el('div',undefined,'lx-stack');wrap.append(select,day);card.append(wrap);const legend=el('div',undefined,'lx-track-legend');legend.append(el('span','定位点连线'),el('span','缺失区间（非实际路线）'));card.append(legend);side.append(card);
+      const today=new Date(),min=new Date(today),yesterday=new Date(today);min.setDate(min.getDate()-29);yesterday.setDate(yesterday.getDate()-1);
+      const maxDate=local(today),minDate=local(min);day.value=date&&date>=minDate&&date<=maxDate?date:maxDate;
+      const calendar=el('div',undefined,'lx-calendar-wrap'),trigger=button('',()=>{popup.hidden=!popup.hidden;trigger.setAttribute('aria-expanded',String(!popup.hidden));if(!popup.hidden){month=new Date(day.value+'T00:00:00');month.setDate(1);drawCalendar();}},'lx-field lx-date-trigger');
+      trigger.setAttribute('aria-label','选择日期');trigger.setAttribute('aria-expanded','false');
+      const popup=el('div',undefined,'lx-calendar');popup.hidden=true;
+      let month=new Date(day.value+'T00:00:00');month.setDate(1);
+      const updateLabel=()=>{trigger.replaceChildren(el('span','▦'),el('span',day.value+(day.value===maxDate?' · 今日':day.value===local(yesterday)?' · 昨日':'')),el('span','⌄','lx-date-arrow'));};
+      const choose=value=>{if(value<minDate||value>maxDate)return;day.value=value;popup.hidden=true;trigger.setAttribute('aria-expanded','false');updateLabel();this.loadHistory();};
+      const drawCalendar=()=>{
+        popup.replaceChildren();const header=el('div',undefined,'lx-cal-header');
+        const prev=button('‹',()=>{month.setMonth(month.getMonth()-1);drawCalendar();}),next=button('›',()=>{month.setMonth(month.getMonth()+1);drawCalendar();});
+        prev.setAttribute('aria-label','上个月');next.setAttribute('aria-label','下个月');
+        prev.disabled=local(new Date(month.getFullYear(),month.getMonth(),0))<minDate;
+        next.disabled=local(new Date(month.getFullYear(),month.getMonth()+1,1))>maxDate;
+        header.append(prev,el('strong',month.getFullYear()+'年'+(month.getMonth()+1)+'月'),next);popup.append(header);
+        const grid=el('div',undefined,'lx-cal-grid');
+        for(const name of ['日','一','二','三','四','五','六'])grid.append(el('span',name,'lx-muted'));
+        for(let i=0;i<month.getDay();i++)grid.append(el('span'));
+        const count=new Date(month.getFullYear(),month.getMonth()+1,0).getDate();
+        for(let i=1;i<=count;i++){
+          const value=local(new Date(month.getFullYear(),month.getMonth(),i)),cell=button(String(i),()=>choose(value));
+          cell.disabled=value<minDate||value>maxDate;cell.setAttribute('aria-pressed',String(value===day.value));cell.setAttribute('aria-label',value);
+          if(value===maxDate)cell.classList.add('lx-cal-today');grid.append(cell);
+        }popup.append(grid);
+        const footer=el('div',undefined,'lx-cal-header');footer.append(button('昨日',()=>choose(local(yesterday))),button('今日',()=>choose(maxDate)));popup.append(footer);
+      };
+      calendar.append(trigger,day,popup);calendar.onkeydown=e=>{if(e.key==='Escape'){popup.hidden=true;trigger.setAttribute('aria-expanded','false');trigger.focus();}};
+      updateLabel();
+      const wrap=el('div',undefined,'lx-stack');wrap.append(select,calendar);card.append(wrap);side.append(card);
       const timeline=el('section',undefined,'lx-card');timeline.id='history-timeline';side.append(timeline);
-      select.onchange=day.onchange=()=>this.loadHistory();
+      select.onchange=()=>{popup.hidden=true;trigger.setAttribute('aria-expanded','false');this.loadHistory();};
       this.loadHistory();
     }
   }
@@ -112,9 +139,9 @@ class LocationPanel extends HTMLElement{
     }catch(e){if(target.isConnected)target.textContent='地址暂不可用';}
   }
   async loadHistory(){
-    const select=this.querySelector('.lx-side select'),day=this.querySelector('.lx-side input[type=date]'),timeline=this.querySelector('#history-timeline');
+    const select=this.querySelector('.lx-side select'),day=this.querySelector('[data-history-date]'),timeline=this.querySelector('#history-timeline');
     if(!select||!day||!timeline)return;
-    const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.paintHistory();
+    const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.openHistoryPoint=null;this.paintHistory();
     timeline.replaceChildren(el('h2','定位时间轴'));
     if(!select.value||!day.value){timeline.append(el('p','请选择设备及日期','lx-muted'));return;}
     const start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
@@ -122,15 +149,25 @@ class LocationPanel extends HTMLElement{
     try{
       const r=await this._hass.callWS({type:NS+'history',entity_id:select.value,start:start.getTime(),end:end.getTime()});
       if(this.page!=='history'||seq!==this.historySeq||!timeline.isConnected)return;
-      this.historyData=r.points;this.paintHistory();
-      timeline.replaceChildren(el('h2','定位时间轴'),el('p',r.points.length+' 个定位点'+(r.truncated?' · 已截断':''),'lx-muted'));
+      this.historyData=r.points;
+      const title=el('div',undefined,'lx-title');title.append(el('h2','定位时间轴'),el('span',r.points.length+' 个定位点'+(r.truncated?' · 已截断':''),'lx-muted'));timeline.replaceChildren(title);
       if(!r.points.length)timeline.append(el('p','当日暂无定位记录','lx-muted'));
-      let shown=0;
+      let shown=0,expanded=null;const entity=select.value;
+      const timeOnly=t=>new Date(t).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      const close=()=>{if(!expanded)return;expanded.row.setAttribute('aria-expanded','false');expanded.card.classList.remove('lx-point-open');expanded.arrow.textContent='⌄';expanded.detail.hidden=true;expanded=null;};
       const more=button('显示更多',()=>append());
       const append=()=>{more.remove();for(const p of r.points.slice(shown,shown+50)){
-        const row=button('',()=>{if(this.map)this.map.setZoomAndCenter(17,this.gcj(p.longitude,p.latitude));},'lx-list-row');
-        row.dataset.recordedAt=String(p.recorded_at);row.style.width='100%';row.style.textAlign='left';row.append(el('span',fmt(p.recorded_at)),el('span',p.accuracy==null?'精度未知':Math.round(p.accuracy)+' m','lx-muted'));const addr=el('div','','lx-muted');const original=row.onclick;row.onclick=()=>{original();this.resolveAddress(select.value,p.recorded_at,addr);};timeline.append(row,addr);
-      }shown+=50;if(shown<r.points.length)timeline.append(more);};append();
+        const card=el('div',undefined,'lx-point-card'),detail=el('div',undefined,'lx-point-address'),arrow=el('span','⌄','lx-point-arrow');
+        detail.hidden=true;detail.textContent='地址解析中…';let requested=false;
+        const row=button('',()=>open(false),'lx-point-row');
+        row.dataset.recordedAt=String(p.recorded_at);row.setAttribute('aria-expanded','false');
+        row.append(icon('mdi:map-marker-radius-outline'),el('span',timeOnly(p.recorded_at),'lx-point-time'),el('span',p.accuracy==null?'精度未知':Math.round(p.accuracy)+' m','lx-muted'),arrow);
+        const open=force=>{if(expanded?.row===row){if(!force)close();return;}close();expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';detail.hidden=false;if(this.map)this.map.setZoomAndCenter(17,this.gcj(p.longitude,p.latitude));if(!requested){requested=true;this.resolveAddress(entity,p.recorded_at,detail);}};
+        row.openPoint=()=>open(true);card.append(row,detail);timeline.append(card);
+      }shown=Math.min(shown+50,r.points.length);if(shown<r.points.length)timeline.append(more);};
+      append();
+      this.openHistoryPoint=i=>{if(seq!==this.historySeq||!timeline.isConnected)return;while(shown<=i&&shown<r.points.length)append();const row=timeline.querySelector('[data-recorded-at="'+r.points[i].recorded_at+'"]');if(row){row.openPoint();row.scrollIntoView({block:'nearest'});}};
+      this.paintHistory();
     }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),el('p','查询失败：'+String(e.message||e),'lx-muted'));}
   }
   paintHistory(){
@@ -150,21 +187,7 @@ class LocationPanel extends HTMLElement{
       const key=xy[i].map(v=>v.toFixed(6)).join(',');
       if(!groups.has(key))groups.set(key,[]);groups.get(key).push(i);
     }
-    const focus=i=>{
-      const p=points[i];if(!this.map||this.page!=='history')return;
-      this.map.setZoomAndCenter(17,xy[i]);
-      const timeline=this.querySelector('#history-timeline');
-      if(!timeline)return;
-      let row=timeline.querySelector('[data-recorded-at="'+p.recorded_at+'"]');
-      if(row){row.scrollIntoView({block:'nearest'});row.click();}
-      else {
-        let detail=timeline.querySelector('.lx-selected-point');
-        if(!detail){detail=el('div',undefined,'lx-selected-point');timeline.insertBefore(detail,timeline.children[1]||null);}
-        detail.replaceChildren(el('strong',fmt(p.recorded_at)),el('div',p.accuracy==null?'精度未知':'定位精度 '+Math.round(p.accuracy)+' m','lx-muted'));
-        const addr=el('div','地址解析中…','lx-muted');detail.append(addr);
-        const entity=this.querySelector('.lx-side select')?.value;if(entity)this.resolveAddress(entity,p.recorded_at,addr);
-      }
-    };
+    const focus=i=>{if(this.map&&this.page==='history')this.openHistoryPoint?.(i);};
     for(const indices of groups.values()){
       const i=indices[0],isFirst=indices.includes(0),isLast=indices.includes(points.length-1);
       if(isFirst||isLast){
