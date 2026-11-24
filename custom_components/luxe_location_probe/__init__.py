@@ -39,7 +39,7 @@ async def async_setup_entry(hass, entry):
         websocket_api.async_register_command(hass, ws_geocode)
         state["registered"] = True
     state["active"] = dict(entry.data)
-    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置地图测试", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.0.1", require_admin=True, embed_iframe=False)
+    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置地图测试", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.0.2", require_admin=True, embed_iframe=False)
     return True
 async def async_unload_entry(hass, entry):
     frontend.async_remove_panel(hass, PANEL)
