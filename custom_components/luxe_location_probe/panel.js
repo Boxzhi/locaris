@@ -1,4 +1,4 @@
-const VERSION='0.1.7-preview';
+const VERSION='0.1.8-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -50,7 +50,7 @@ class LocationPanel extends HTMLElement{
     .lx-device-head{display:flex;align-items:center;gap:10px}.lx-avatar{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--secondary-background-color,#293441);color:var(--lx-accent);flex:none}.lx-name{flex:1;min-width:0;overflow-wrap:anywhere}
     .lx-switch{display:flex;align-items:center;gap:8px;cursor:pointer}.lx-switch input{appearance:none;-webkit-appearance:none;width:42px;height:24px;border-radius:20px;background:#78838e;position:relative;cursor:pointer;margin:0}.lx-switch input:checked{background:var(--lx-accent)}.lx-switch input:before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;background:white;border-radius:50%;transition:transform .15s}.lx-switch input:checked:before{transform:translateX(18px)}
     .lx-more{position:relative}.lx-more summary{cursor:pointer;list-style:none;padding:8px}.lx-more summary::-webkit-details-marker{display:none}.lx-more-panel{position:absolute;right:0;top:100%;z-index:10;min-width:180px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:10px;padding:5px;box-shadow:0 6px 20px #0003}.lx-more-panel button{display:block;width:100%;text-align:left;white-space:nowrap}
-    .lx-calendar-wrap{position:relative;min-width:0}.lx-date-trigger{display:flex;align-items:center;gap:8px;text-align:left}.lx-date-arrow{margin-left:auto}.lx-calendar{width:100%;margin-top:8px;padding:8px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:12px}.lx-calendar[hidden],.lx-point-address[hidden]{display:none!important}.lx-cal-header{display:flex;align-items:center;justify-content:space-between;gap:4px}.lx-cal-header button{min-height:34px;padding:4px 10px}.lx-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center;align-items:center;margin:6px 0}.lx-cal-grid button{padding:0;height:34px;min-width:0;font-size:14px;border-radius:8px}.lx-cal-grid button[aria-pressed=true]{background:var(--lx-accent);color:white}.lx-cal-grid button:disabled{opacity:.3}.lx-cal-today:not([aria-pressed=true]){color:var(--lx-accent);font-weight:bold}.lx-point-card{border-bottom:1px solid var(--lx-line);border-radius:9px;padding:3px 0}.lx-point-card:last-child{border:0}.lx-point-open{background:var(--secondary-background-color,#293441)}.lx-point-row{display:flex;width:100%;align-items:center;gap:8px;text-align:left;padding:10px 6px!important}.lx-point-row svg{flex:none;color:var(--lx-accent);width:18px;height:18px}.lx-point-time{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap}.lx-point-arrow{color:var(--secondary-text-color,#a6afbd);font-size:16px}.lx-point-address{padding:0 10px 10px 32px;font-size:13px;color:var(--secondary-text-color,#a6afbd);overflow-wrap:anywhere}.lx-field{font:inherit;width:100%;padding:8px;border:1px solid var(--lx-line);border-radius:8px;background:var(--lx-card);color:inherit}.lx-sub{margin:8px 0 0}.lx-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-list-row:last-child{border:0}
+    .lx-calendar-wrap{position:relative;min-width:0}.lx-date-trigger{display:flex;align-items:center;gap:8px;text-align:left}.lx-date-arrow{margin-left:auto}.lx-calendar{width:100%;margin-top:8px;padding:8px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:12px}.lx-calendar[hidden],.lx-point-address[hidden]{display:none!important}.lx-cal-header{display:flex;align-items:center;justify-content:space-between;gap:4px}.lx-cal-header button{min-height:34px;padding:4px 10px}.lx-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center;align-items:center;margin:6px 0}.lx-cal-grid button{padding:0;height:34px;min-width:0;font-size:14px;border-radius:8px}.lx-cal-grid button[aria-pressed=true]{background:var(--lx-accent);color:white}.lx-cal-grid button:disabled{opacity:.3}.lx-cal-today:not([aria-pressed=true]){color:var(--lx-accent);font-weight:bold}.lx-point-card{position:relative;border-radius:9px;padding:3px 0}.lx-point-card+.lx-point-card:before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:var(--lx-line);pointer-events:none}.lx-point-open{background:var(--secondary-background-color,#293441)}.lx-point-row{display:flex;width:100%;align-items:center;gap:8px;text-align:left;padding:10px 6px!important}.lx-point-row svg{flex:none;color:var(--secondary-text-color,#8997a9);width:18px;height:18px}.lx-point-row[aria-expanded=true] svg{color:var(--lx-accent)}.lx-point-row[aria-expanded=true] .lx-point-time,.lx-point-row[aria-expanded=true] .lx-point-arrow{color:var(--lx-accent)}.lx-point-row .lx-pin-filled{display:none}.lx-point-row[aria-expanded=true] .lx-pin-filled{display:block}.lx-point-row[aria-expanded=true] .lx-pin-outline{display:none}.lx-point-time{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap}.lx-point-arrow{color:var(--secondary-text-color,#a6afbd);font-size:16px}.lx-point-address{padding:0 10px 10px 32px;font-size:13px;color:var(--secondary-text-color,#a6afbd);overflow-wrap:anywhere}.lx-field{font:inherit;width:100%;padding:8px;border:1px solid var(--lx-line);border-radius:8px;background:var(--lx-card);color:inherit}.lx-sub{margin:8px 0 0}.lx-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-list-row:last-child{border:0}
     @media(max-width:760px){.lx-menu{display:block}.lx-head h1{font-size:20px}.lx-tabs{order:5;justify-content:space-around;border-top:1px solid var(--lx-line);padding:5px 0 env(safe-area-inset-bottom,0px)}.lx-tabs button{flex:1;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px}.lx-tabs ha-icon{--mdc-icon-size:23px}.lx-grid{grid-template-columns:1fr}.lx-map-layout{display:flex;flex-direction:column;height:auto;min-height:0}.lx-map{order:-1;flex:none;height:48vh;height:48dvh;min-height:250px}.lx-side{overflow:visible}.lx-card{padding:11px}.lx-shell{padding-bottom:0}}
     </style><div class="lx-shell"><header class="lx-head"><button id="menu" class="lx-menu" aria-label="打开侧边栏"></button><h1>位置中心</h1></header><nav class="lx-tabs" aria-label="位置中心页面"></nav><div class="lx-error" role="status"></div><main class="lx-content"></main></div>`;
     this.querySelector('#menu').append(icon('mdi:menu'));this.querySelector('#menu').onclick=()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true}));
@@ -154,21 +154,37 @@ class LocationPanel extends HTMLElement{
       if(!r.points.length)timeline.append(el('p','当日暂无定位记录','lx-muted'));
       let shown=0,expanded=null;const entity=select.value;
       const timeOnly=t=>new Date(t).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
-      const close=()=>{if(!expanded)return;expanded.row.setAttribute('aria-expanded','false');expanded.card.classList.remove('lx-point-open');expanded.arrow.textContent='⌄';expanded.detail.hidden=true;expanded=null;};
+      const close=(restore=false)=>{if(!expanded)return;expanded.row.setAttribute('aria-expanded','false');expanded.card.classList.remove('lx-point-open');expanded.arrow.textContent='⌄';this.animatePoint(expanded.detail,false);expanded=null;if(restore)this.fitHistory();};
       const more=button('显示更多',()=>append());
       const append=()=>{more.remove();for(const p of r.points.slice(shown,shown+50)){
         const card=el('div',undefined,'lx-point-card'),detail=el('div',undefined,'lx-point-address'),arrow=el('span','⌄','lx-point-arrow');
         detail.hidden=true;detail.textContent='地址解析中…';let requested=false;
         const row=button('',()=>open(false),'lx-point-row');
         row.dataset.recordedAt=String(p.recorded_at);row.setAttribute('aria-expanded','false');
-        row.append(icon('mdi:map-marker-radius-outline'),el('span',timeOnly(p.recorded_at),'lx-point-time'),el('span',p.accuracy==null?'精度未知':Math.round(p.accuracy)+' m','lx-muted'),arrow);
-        const open=force=>{if(expanded?.row===row){if(!force)close();return;}close();expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';detail.hidden=false;if(this.map)this.map.setZoomAndCenter(17,this.gcj(p.longitude,p.latitude));if(!requested){requested=true;this.resolveAddress(entity,p.recorded_at,detail);}};
+        const outline=icon('mdi:map-marker-radius-outline');outline.classList.add('lx-pin-outline');const filled=document.createElementNS('http://www.w3.org/2000/svg','svg');filled.setAttribute('viewBox','0 0 24 24');filled.setAttribute('aria-hidden','true');filled.classList.add('lx-pin-filled');const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M12 22C10 19 4.5 13.5 4.5 9.5a7.5 7.5 0 0 1 15 0C19.5 13.5 14 19 12 22Z M12 6.7a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Z');path.setAttribute('fill','currentColor');path.setAttribute('fill-rule','evenodd');filled.append(path);row.append(outline,filled,el('span',timeOnly(p.recorded_at),'lx-point-time'),el('span',p.accuracy==null?'精度未知':Math.round(p.accuracy)+' m','lx-muted'),arrow);
+        const open=force=>{if(expanded?.row===row){if(!force)close(true);return;}close(false);expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';this.animatePoint(detail,true);if(this.map)this.map.setZoomAndCenter(17,this.gcj(p.longitude,p.latitude));if(!requested){requested=true;this.resolveAddress(entity,p.recorded_at,detail);}};
         row.openPoint=()=>open(true);card.append(row,detail);timeline.append(card);
       }shown=Math.min(shown+50,r.points.length);if(shown<r.points.length)timeline.append(more);};
       append();
       this.openHistoryPoint=i=>{if(seq!==this.historySeq||!timeline.isConnected)return;while(shown<=i&&shown<r.points.length)append();const row=timeline.querySelector('[data-recorded-at="'+r.points[i].recorded_at+'"]');if(row){row.openPoint();row.scrollIntoView({block:'nearest'});}};
       this.paintHistory();
     }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),el('p','查询失败：'+String(e.message||e),'lx-muted'));}
+  }
+  animatePoint(detail,open){
+    if(detail._lxAnimation){detail._lxAnimation.cancel();detail._lxAnimation=null;}
+    const reduce=typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(!detail.animate||reduce){detail.hidden=!open;return;}
+    if(open)detail.hidden=false;
+    const h=detail.getBoundingClientRect().height;
+    const animation=detail.animate(open?[{height:'0px',opacity:0,paddingBottom:'0px'},{height:h+'px',opacity:1}]:[{height:h+'px',opacity:1},{height:'0px',opacity:0,paddingBottom:'0px'}],{duration:180,easing:'ease',fill:'none'});
+    detail._lxAnimation=animation;detail.style.overflow='hidden';
+    animation.onfinish=()=>{if(detail._lxAnimation!==animation)return;detail._lxAnimation=null;detail.style.overflow='';detail.hidden=!open;};
+  }
+  fitHistory(){
+    if(!this.map||this.page!=='history'||!this.historyData?.length||!this.historyOverlays?.length)return;
+    const first=this.historyData[0],xy=this.gcj(first.longitude,first.latitude);
+    if(this.historyData.every(p=>Math.abs(p.longitude-first.longitude)<0.000001&&Math.abs(p.latitude-first.latitude)<0.000001))this.map.setZoomAndCenter(16,xy);
+    else this.map.setFitView(this.historyOverlays,false,[45,45,45,45],16);
   }
   paintHistory(){
     if(!this.map||this.page!=='history')return;
@@ -200,7 +216,7 @@ class LocationPanel extends HTMLElement{
         marker.on('click',()=>focus(i));this.historyOverlays.push(marker);
       }
     }
-    this.map.add(this.historyOverlays);if(groups.size===1)this.map.setZoomAndCenter(16,xy[0]);else this.map.setFitView(this.historyOverlays,false,[45,45,45,45],16);
+    this.map.add(this.historyOverlays);this.fitHistory();
   }
   color(id){let n=0;for(const c of id)n=(n*31+c.charCodeAt(0))>>>0;return ['#3b82f6','#0ca87d','#a855f7','#e58b25','#e05e86'][n%5];}
   // Local coordinate conversion avoids sending precise positions to the conversion service.
