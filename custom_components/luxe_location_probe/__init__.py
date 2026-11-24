@@ -1,4 +1,6 @@
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from .location_store import now_ms, WINDOW
 import voluptuous as vol
 from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
@@ -51,6 +53,29 @@ async def ws_storage(hass, connection, msg):
     except Exception:
         connection.send_error(msg["id"], "storage_failed", "Storage operation failed")
 
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/history", vol.Required("entity_id"): str, vol.Required("start"): int, vol.Required("end"): int})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_history(hass, connection, msg):
+    store = hass.data.get(DOMAIN, {}).get("store")
+    if not store or not store.ready:
+        connection.send_error(msg["id"], "not_loaded", "Storage not ready")
+        return
+    entity = msg["entity_id"]
+    start, end = msg["start"], msg["end"]
+    if end <= start or end-start > 26*3600000:
+        connection.send_error(msg["id"], "invalid_range", "Select one day")
+        return
+    async with store.lock:
+        if entity not in store.managed:
+            connection.send_error(msg["id"], "invalid_device", "Device not managed")
+            return
+        def read(con):
+            rows = con.execute("SELECT recorded_at,latitude,longitude,accuracy FROM probe_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at LIMIT 10001", (entity,max(start,now_ms()-WINDOW),min(end,now_ms()+1))).fetchall()
+            return [dict(r) for r in rows]
+        rows = await store.run(read)
+    connection.send_result(msg["id"], {"points":rows[:10000],"truncated":len(rows)>10000})
+
 async def async_setup(hass, config):
     return True
 async def async_setup_entry(hass, entry):
@@ -59,12 +84,13 @@ async def async_setup_entry(hass, entry):
         await hass.http.async_register_static_paths([StaticPathConfig("/luxe-location-probe-assets/panel.js", str(Path(__file__).parent / "panel.js"), False)])
         websocket_api.async_register_command(hass, ws_config)
         websocket_api.async_register_command(hass, ws_storage)
+        websocket_api.async_register_command(hass, ws_history)
         state["registered"] = True
     store = Store(hass)
     await store.start()
     state["store"] = store
     state["active"] = dict(entry.data)
-    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.2-preview", require_admin=True, embed_iframe=True)
+    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.3-preview", require_admin=True, embed_iframe=True)
     return True
 async def async_unload_entry(hass, entry):
     frontend.async_remove_panel(hass, PANEL)

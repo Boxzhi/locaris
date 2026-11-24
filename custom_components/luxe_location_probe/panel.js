@@ -1,4 +1,4 @@
-const VERSION='0.1.2-preview';
+const VERSION='0.1.3-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -67,7 +67,7 @@ class LocationPanel extends HTMLElement{
     finally{this.busy=false;}
   }
   switchPage(page){
-    this.page=page;this.destroyMap();
+    this.page=page;this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.destroyMap();
     for(const b of this.querySelectorAll('[data-page]'))b.setAttribute('aria-selected',String(b.dataset.page===page));
     const main=this.querySelector('.lx-content');main.replaceChildren();
     if(page==='live'||page==='history'){
@@ -77,7 +77,7 @@ class LocationPanel extends HTMLElement{
       if(this._hass?.user?.is_admin){this.buildMap(target);if(page==='live'&&this.started&&!this.busy)this.refresh();}
     }else this.drawData();
   }
-  updateData(){if(this.page==='live'||this.page==='history'){this.drawSide();if(this.page==='live')this.syncMarkers();}else this.drawData();}
+  updateData(){if(this.page==='live'){this.drawSide();this.syncMarkers();}else if(this.page==='history'){if(!this.querySelector('.lx-side select')?.options.length)this.drawSide();}else this.drawData();}
   drawSide(){
     const side=this.querySelector('.lx-side');if(!side)return;
     const old=side.querySelector('select')?.value,date=side.querySelector('input[type=date]')?.value;side.replaceChildren();
@@ -94,15 +94,50 @@ class LocationPanel extends HTMLElement{
       const day=el('input',undefined,'lx-field');day.type='date';day.setAttribute('aria-label','选择日期');
       const local=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
       const today=new Date(),min=new Date(today);min.setDate(min.getDate()-29);day.max=local(today);day.min=local(min);day.value=date||day.max;
-      const wrap=el('div',undefined,'lx-stack');wrap.append(select,day);card.append(wrap,el('p','历史轨迹查询接口待接入。','lx-muted'));side.append(card);
-      const timeline=el('section',undefined,'lx-card');timeline.append(el('h2','定位时间轴'),el('p','暂无可展示轨迹','lx-muted'));side.append(timeline);
+      const wrap=el('div',undefined,'lx-stack');wrap.append(select,day);card.append(wrap);side.append(card);
+      const timeline=el('section',undefined,'lx-card');timeline.id='history-timeline';side.append(timeline);
+      select.onchange=day.onchange=()=>this.loadHistory();
+      this.loadHistory();
     }
   }
   async buildMap(target){
-    try{const c=await this._hass.callWS({type:NS+'config'}),A=await sdk(c);if(!this.isConnected||!target.isConnected)return;this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});this.layer(this.mapLayer||'standard');if(this.page==='live')this.syncMarkers();}
+    try{const c=await this._hass.callWS({type:NS+'config'}),A=await sdk(c);if(!this.isConnected||!target.isConnected)return;this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});this.layer(this.mapLayer||'standard');if(this.page==='live')this.syncMarkers();else this.paintHistory();}
     catch(e){if(target.isConnected)this.status('地图加载失败：'+String(e.message||e));}
   }
-  destroyMap(){this.markers=new Map();this.didFit=false;if(this.map){this.map.destroy();this.map=null;}}
+  destroyMap(){this.historyOverlays=[];this.markers=new Map();this.didFit=false;if(this.map){this.map.destroy();this.map=null;}}
+  async loadHistory(){
+    const select=this.querySelector('.lx-side select'),day=this.querySelector('.lx-side input[type=date]'),timeline=this.querySelector('#history-timeline');
+    if(!select||!day||!timeline)return;
+    const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.paintHistory();
+    timeline.replaceChildren(el('h2','定位时间轴'));
+    if(!select.value||!day.value){timeline.append(el('p','请选择设备及日期','lx-muted'));return;}
+    const start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
+    timeline.append(el('p','正在加载…','lx-muted'));
+    try{
+      const r=await this._hass.callWS({type:NS+'history',entity_id:select.value,start:start.getTime(),end:end.getTime()});
+      if(this.page!=='history'||seq!==this.historySeq||!timeline.isConnected)return;
+      this.historyData=r.points;this.paintHistory();
+      timeline.replaceChildren(el('h2','定位时间轴'),el('p',r.points.length+' 个定位点'+(r.truncated?' · 已截断':''),'lx-muted'));
+      if(!r.points.length)timeline.append(el('p','当日暂无定位记录','lx-muted'));
+      let shown=0;
+      const more=button('显示更多',()=>append());
+      const append=()=>{more.remove();for(const p of r.points.slice(shown,shown+50)){
+        const row=button('',()=>{if(this.map)this.map.setZoomAndCenter(17,this.gcj(p.longitude,p.latitude));},'lx-list-row');
+        row.style.width='100%';row.style.textAlign='left';row.append(el('span',fmt(p.recorded_at)),el('span',p.accuracy==null?'精度未知':Math.round(p.accuracy)+' m','lx-muted'));timeline.append(row);
+      }shown+=50;if(shown<r.points.length)timeline.append(more);};append();
+    }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),el('p','查询失败：'+String(e.message||e),'lx-muted'));}
+  }
+  paintHistory(){
+    if(!this.map||this.page!=='history')return;
+    if(this.historyOverlays?.length)this.map.remove(this.historyOverlays);
+    this.historyOverlays=[];const points=this.historyData||[];if(!points.length)return;
+    const A=this.A,groups=[];let group=[];
+    for(let i=0;i<points.length;i++){const p=points[i];if(i&&p.recorded_at-points[i-1].recorded_at>30*60000){groups.push(group);group=[];}group.push(this.gcj(p.longitude,p.latitude));}if(group.length)groups.push(group);
+    for(const g of groups){if(g.length>1)this.historyOverlays.push(new A.Polyline({path:g,strokeColor:'#4387e8',strokeWeight:4,strokeOpacity:.85}));else this.historyOverlays.push(new A.CircleMarker({center:g[0],radius:5,fillColor:'#4387e8',fillOpacity:1,strokeColor:'#fff'}));}
+    const first=groups[0][0],last=groups[groups.length-1].slice(-1)[0];
+    for(const [xy,title] of [[first,'首个定位'],[last,'末次定位']])this.historyOverlays.push(new A.Marker({position:xy,title}));
+    this.map.add(this.historyOverlays);if(points.length===1)this.map.setZoomAndCenter(16,first);else this.map.setFitView(this.historyOverlays,false,[45,45,45,45],16);
+  }
   color(id){let n=0;for(const c of id)n=(n*31+c.charCodeAt(0))>>>0;return ['#3b82f6','#0ca87d','#a855f7','#e58b25','#e05e86'][n%5];}
   // Local coordinate conversion avoids sending precise positions to the conversion service.
   gcj(lon,lat){
@@ -162,7 +197,7 @@ class LocationPanel extends HTMLElement{
       for(const [name,value] of [['历史保留','30 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['历史定位点',String(d.devices.reduce((s,x)=>s+x.count,0))],['最近清理',fmt(d.last_cleanup)],['错误次数',String(d.errors)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
       card.append(button('复制诊断',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(d,null,2));this.status('诊断已复制');}catch(e){this.status('复制失败');}}));stack.append(card);
       const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
-      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；地址解析及高德安全代理尚未接入。','lx-muted'));stack.append(about);
+      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；历史轨迹已接入；地址解析及高德安全代理尚未接入。','lx-muted'));stack.append(about);
     }
   }
 }
