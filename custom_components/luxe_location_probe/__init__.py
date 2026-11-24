@@ -177,19 +177,42 @@ async def ws_address(hass,connection,msg):
         connection.send_result(msg["id"],{"address":None})
         return
     lon,lat=gcj(*coords)
-    # Cache only in memory: no extra durable location history or orphaned address rows.
     cache=state.setdefault("address_cache",{})
     lock=state.setdefault("address_lock",asyncio.Lock())
-    key=(entity,round(lon,4),round(lat,4))
+    key=(entity,round(lon,5),round(lat,5))
     async with lock:
-        now=time.monotonic()
-        if key in cache and now-cache[key][0]<86400:
-            connection.send_result(msg["id"],{"address":cache[key][1]})
-            return
-        if now-state.get("last_address_request",-1000)<1:
-            connection.send_result(msg["id"],{"address":None})
-            return
-        state["last_address_request"]=now
+        # Snapshot the recording generation; removal/pause/re-add during HTTP
+        # must never resurrect an address after the device's history was deleted.
+        async with store.lock:
+            if not store.active or entity not in store.managed:
+                connection.send_result(msg["id"],{"address":None})
+                return
+            generation=await store.run(lambda c:c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?",(entity,)).fetchone())
+            if not generation or ("recorded_at" not in msg and entity not in store.devices):
+                connection.send_result(msg["id"],{"address":None})
+                return
+            generation=generation[0]
+            if "recorded_at" in msg:
+                exists=await store.run(lambda c:c.execute("SELECT 1 FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
+                if not exists:
+                    connection.send_result(msg["id"],{"address":None})
+                    return
+            now=now_ms()
+            hit=cache.get(key)
+            if hit and now-hit[0]<WINDOW:
+                connection.send_result(msg["id"],{"address":hit[1]})
+                return
+            hit=await store.run(store.cached_address,entity,lon,lat)
+            if hit:
+                if len(cache)>=2048:
+                    cache.pop(next(iter(cache)))
+                cache[key]=(hit[2],hit[1])
+                connection.send_result(msg["id"],{"address":hit[1]})
+                return
+        delay=max(0,1-(time.monotonic()-state.get("last_address_request",-1000)))
+        if delay:
+            await asyncio.sleep(delay)
+        state["last_address_request"]=time.monotonic()
         address=None
         try:
             async with async_get_clientsession(hass).get("https://restapi.amap.com/v3/geocode/regeo",params={"key":state["active"]["service_key"],"location":f"{lon:.6f},{lat:.6f}","extensions":"base"},timeout=10,allow_redirects=False) as resp:
@@ -198,10 +221,16 @@ async def ws_address(hass,connection,msg):
                     address=result.get("regeocode",{}).get("formatted_address")
         except Exception:
             pass
-        if isinstance(address,str) and address and entity in store.managed:
-            if len(cache)>=2048:
-                cache.pop(next(iter(cache)))
-            cache[key]=(now,address)
+        async with store.lock:
+            current=await store.run(lambda c:c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?",(entity,)).fetchone()) if store.active else None
+            if not current or current[0]!=generation or entity not in store.managed or ("recorded_at" not in msg and entity not in store.devices):
+                address=None
+            if isinstance(address,str) and address:
+                address=address[:1024]
+                await store.run(store.save_address,entity,lon,lat,address)
+                if len(cache)>=2048:
+                    cache.pop(next(iter(cache)))
+                cache[key]=(now_ms(),address)
         connection.send_result(msg["id"],{"address":address if isinstance(address,str) else None})
 
 async def async_setup(hass, config):
@@ -222,7 +251,7 @@ async def async_setup_entry(hass, entry):
     state["active"] = dict(entry.data)
     state["proxy_sessions"] = {}
     state["address_cache"] = {}
-    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.4-preview", require_admin=True, embed_iframe=True)
+    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.5-preview", require_admin=True, embed_iframe=True)
     return True
 async def async_unload_entry(hass, entry):
     frontend.async_remove_panel(hass, PANEL)

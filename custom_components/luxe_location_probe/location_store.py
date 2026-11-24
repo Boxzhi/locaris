@@ -91,6 +91,13 @@ class Store:
                       PRIMARY KEY(entity_id, recorded_at)
                     );
                     CREATE INDEX IF NOT EXISTS probe_location_time ON probe_locations(recorded_at);
+                    CREATE TABLE IF NOT EXISTS probe_address_cache (
+                      entity_id TEXT NOT NULL REFERENCES probe_devices(entity_id) ON DELETE CASCADE,
+                      lon REAL NOT NULL, lat REAL NOT NULL, address TEXT NOT NULL,
+                      created_at INTEGER NOT NULL,
+                      PRIMARY KEY(entity_id,lon,lat)
+                    );
+                    CREATE INDEX IF NOT EXISTS probe_address_time ON probe_address_cache(created_at);
                 """)
                 con.execute("INSERT OR IGNORE INTO probe_management SELECT entity_id,0 FROM probe_devices")
                 return ([r[0] for r in con.execute("SELECT entity_id FROM probe_devices WHERE entity_id NOT IN (SELECT entity_id FROM probe_paused)")],
@@ -168,6 +175,7 @@ class Store:
                 c.execute("INSERT INTO probe_management VALUES (?,1) ON CONFLICT(entity_id) DO UPDATE SET excluded=1", (entity,))
                 c.execute("INSERT OR IGNORE INTO probe_paused VALUES (?)", (entity,))
                 if delete_history:
+                    c.execute("DELETE FROM probe_address_cache WHERE entity_id=?", (entity,))
                     c.execute("DELETE FROM probe_devices WHERE entity_id=?", (entity,))
                 else:
                     now = now_ms()
@@ -315,7 +323,10 @@ class Store:
     async def cleanup(self):
         async with self.lock:
             cutoff = now_ms() - WINDOW
-            await self.run(lambda c: c.execute("DELETE FROM probe_locations WHERE recorded_at < ?", (cutoff,)))
+            def prune(c):
+                c.execute("DELETE FROM probe_locations WHERE recorded_at < ?", (cutoff,))
+                c.execute("DELETE FROM probe_address_cache WHERE created_at < ?", (cutoff,))
+            await self.run(prune)
             await self.hass.async_add_executor_job(self.checkpoint)
             self.last_cleanup = now_ms()
 
@@ -324,6 +335,28 @@ class Store:
             await self.cleanup()
             for entity in sorted(self.devices):
                 self.spawn(self.backfill(entity))
+
+    @staticmethod
+    def cached_address(con, entity, lon, lat):
+        # Use a bounding box for the index lookup, then an actual distance test.
+        radius = 30
+        dy = radius / 111000
+        dx = min(180, dy / max(.001, abs(math.cos(math.radians(lat)))))
+        rows = con.execute("""SELECT lon,lat,address,created_at FROM probe_address_cache
+            WHERE entity_id=? AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?
+            AND created_at>=?""", (entity,lon-dx,lon+dx,lat-dy,lat+dy,now_ms()-WINDOW)).fetchall()
+        best = None
+        for row in rows:
+            distance = math.hypot((row["lon"]-lon)*111000*math.cos(math.radians(lat)),(row["lat"]-lat)*111000)
+            if distance <= radius and (best is None or distance < best[0]):
+                best = (distance,row["address"],row["created_at"])
+        return best
+
+    @staticmethod
+    def save_address(con, entity, lon, lat, address):
+        con.execute("INSERT INTO probe_address_cache VALUES (?,?,?,?,?) ON CONFLICT(entity_id,lon,lat) DO UPDATE SET address=excluded.address,created_at=excluded.created_at", (entity,lon,lat,address,now_ms()))
+        # Bound storage independently of the retention window.
+        con.execute("DELETE FROM probe_address_cache WHERE rowid IN (SELECT rowid FROM probe_address_cache ORDER BY created_at DESC LIMIT -1 OFFSET 10000)")
 
     async def diagnostics(self):
         def read(con):
@@ -335,8 +368,9 @@ class Store:
             return [dict(row) for row in rows]
         async with self.lock:
             rows = await self.run(read)
+            address_count = await self.run(lambda c:c.execute("SELECT COUNT(*) FROM probe_address_cache WHERE created_at>=?",(now_ms()-WINDOW,)).fetchone()[0])
             size = await self.hass.async_add_executor_job(lambda: sum(p.stat().st_size for p in self.path.parent.glob("location.db*") if p.is_file()))
-        return {"retention_days":30,"database_bytes":size,"last_cleanup":self.last_cleanup,"errors":self.errors,"devices":rows}
+        return {"retention_days":30,"database_bytes":size,"last_cleanup":self.last_cleanup,"errors":self.errors,"devices":rows,"address_cache_count":address_count}
 
     async def stop(self):
         self.active = False
