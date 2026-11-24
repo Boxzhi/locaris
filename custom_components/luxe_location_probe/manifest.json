@@ -1,0 +1,18 @@
+{
+  "domain": "luxe_location_probe",
+  "name": "LUXE Location Map Probe",
+  "version": "0.0.1",
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "panel_custom",
+    "websocket_api"
+  ],
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "documentation": "https://github.com/Boxzhi/luxe_location",
+  "issue_tracker": "https://github.com/Boxzhi/luxe_location/issues",
+  "codeowners": [
+    "@Boxzhi"
+  ]
+}

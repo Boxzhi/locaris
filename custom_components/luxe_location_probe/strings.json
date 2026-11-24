@@ -1,0 +1,20 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "LUXE Location Map Probe",
+        "data": {
+          "map_key": "Web JS API Key",
+          "security_code": "JS API security code",
+          "service_key": "Web service Key"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Already configured"
+    },
+    "error": {
+      "empty": "All keys are required"
+    }
+  }
+}

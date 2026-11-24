@@ -1,0 +1,20 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "位置地图测试",
+        "data": {
+          "map_key": "Web端 JS API Key",
+          "security_code": "JS API 安全密钥",
+          "service_key": "Web服务 Key"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "已经配置"
+    },
+    "error": {
+      "empty": "请填写所有凭据"
+    }
+  }
+}
