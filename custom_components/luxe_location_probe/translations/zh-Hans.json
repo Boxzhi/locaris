@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "位置地图测试",
+        "title": "位置中心",
         "data": {
           "map_key": "Web端 JS API Key",
           "security_code": "JS API 安全密钥",

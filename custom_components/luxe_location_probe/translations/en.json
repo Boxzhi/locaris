@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "LUXE Location Map Probe",
+        "title": "LUXE Location",
         "data": {
           "map_key": "Web JS API Key",
           "security_code": "JS API security code",

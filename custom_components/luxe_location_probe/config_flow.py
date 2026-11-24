@@ -11,7 +11,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             data = {k: v.strip() for k, v in user_input.items()}
             if all(data.values()):
-                return self.async_create_entry(title="LUXE Location Map Probe", data=data)
+                return self.async_create_entry(title="LUXE Location", data=data)
             errors["base"] = "empty"
         return self.async_show_form(step_id="user", errors=errors, data_schema=vol.Schema({
             vol.Required("map_key"): str,
