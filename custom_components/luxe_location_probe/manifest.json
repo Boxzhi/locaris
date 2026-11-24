@@ -1,7 +1,7 @@
 {
   "domain": "luxe_location_probe",
   "name": "LUXE Location Map Probe",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "config_flow": true,
   "dependencies": [
     "frontend",

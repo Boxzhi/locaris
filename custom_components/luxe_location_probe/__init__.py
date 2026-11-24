@@ -30,7 +30,7 @@ async def ws_geocode(hass, connection, msg):
             connection.send_result(msg["id"], {"http_status":resp.status,"status":result.get("status"),"infocode":result.get("infocode"),"info":result.get("info"),"address":result.get("regeocode",{}).get("formatted_address")})
     except Exception as err:
         connection.send_error(msg["id"], "request_failed", type(err).__name__)
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable"]), vol.Optional("entity_id"): str, vol.Optional("import_history", default=False): bool})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove"]), vol.Optional("entity_id"): str, vol.Optional("import_history", default=False): bool, vol.Optional("delete_history", default=False): bool})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_storage(hass, connection, msg):
@@ -40,14 +40,21 @@ async def ws_storage(hass, connection, msg):
         return
     try:
         action = msg["action"]
-        if action == "enable":
+        await store.discover()
+        if action == "add":
+            await store.add(msg.get("entity_id",""))
+        elif action == "remove":
+            await store.remove(msg.get("entity_id",""), msg["delete_history"])
+        elif action == "enable":
             await store.enable(msg.get("entity_id",""), msg["import_history"])
         elif action == "disable":
             await store.disable(msg.get("entity_id",""))
-        devices = [{"entity_id":s.entity_id,"name":s.name,"enabled":s.entity_id in store.devices}
-                   for s in hass.states.async_all("device_tracker") if s.attributes.get("source_type")=="gps"]
-        for entity in sorted(store.devices - {d["entity_id"] for d in devices}):
-            devices.append({"entity_id":entity,"name":entity,"enabled":True})
+        devices = []
+        for entity in sorted(store.managed | store.excluded):
+            state = hass.states.get(entity)
+            devices.append({"entity_id":entity,"name":state.name if state else entity,
+                "managed":entity in store.managed,"enabled":entity in store.devices,
+                "available":bool(state and state.attributes.get("source_type")=="gps" and state.state not in ("unknown","unavailable"))})
         connection.send_result(msg["id"], {"candidates":devices,"diagnostics":await store.diagnostics()})
     except ValueError:
         connection.send_error(msg["id"], "invalid_device", "Invalid GPS device")
@@ -68,7 +75,7 @@ async def async_setup_entry(hass, entry):
     await store.start()
     state["store"] = store
     state["active"] = dict(entry.data)
-    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置地图测试", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.0.4", require_admin=True, embed_iframe=True)
+    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置地图测试", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.0.5", require_admin=True, embed_iframe=True)
     return True
 async def async_unload_entry(hass, entry):
     frontend.async_remove_panel(hass, PANEL)

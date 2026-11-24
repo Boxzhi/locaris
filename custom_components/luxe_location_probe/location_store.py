@@ -41,6 +41,10 @@ class Store:
         self.path = Path(hass.config.path("luxe_location", "location.db"))
         self.lock = asyncio.Lock()
         self.devices = set()
+        self.managed = set()
+        self.excluded = set()
+        self.discovery = None
+        self.importing = set()
         self.unsub = None
         self.timer = None
         self.active = True
@@ -68,6 +72,8 @@ class Store:
             con.execute("PRAGMA secure_delete=ON")
             with con:
                 con.executescript("""
+                    CREATE TABLE IF NOT EXISTS probe_management (entity_id TEXT PRIMARY KEY, excluded INTEGER NOT NULL DEFAULT 0);
+                    CREATE TABLE IF NOT EXISTS probe_paused (entity_id TEXT PRIMARY KEY);
                     CREATE TABLE IF NOT EXISTS probe_devices (
                       entity_id TEXT PRIMARY KEY,
                       consent_at INTEGER NOT NULL,
@@ -85,16 +91,67 @@ class Store:
                     );
                     CREATE INDEX IF NOT EXISTS probe_location_time ON probe_locations(recorded_at);
                 """)
-                return [r[0] for r in con.execute("SELECT entity_id FROM probe_devices")]
+                con.execute("INSERT OR IGNORE INTO probe_management SELECT entity_id,0 FROM probe_devices")
+                return ([r[0] for r in con.execute("SELECT entity_id FROM probe_devices WHERE entity_id NOT IN (SELECT entity_id FROM probe_paused)")],
+                        [(r[0],r[1]) for r in con.execute("SELECT entity_id,excluded FROM probe_management")])
 
     async def start(self):
-        self.devices = set(await self.hass.async_add_executor_job(self.initialize))
+        recording, management = await self.hass.async_add_executor_job(self.initialize)
+        self.managed = {e for e, excluded in management if not excluded}
+        self.excluded = {e for e, excluded in management if excluded}
+        self.devices = set(recording) & self.managed
+        await self.discover()
         self.listen()
         self.timer = async_track_time_interval(self.hass, self.periodic, timedelta(hours=1))
         await self.cleanup()
         self.ready = True
+        self.discovery = async_track_time_interval(self.hass, self.scan_tick, timedelta(minutes=1))
         for entity in sorted(self.devices):
             self.spawn(self.backfill(entity))
+
+    async def discover(self):
+        candidates = {s.entity_id for s in self.hass.states.async_all("device_tracker")
+                      if s.attributes.get("source_type") == "gps"}
+        async with self.lock:
+            if not self.active:
+                return
+            new = candidates - self.managed - self.excluded
+            if new:
+                await self.run(lambda c: c.executemany("INSERT OR IGNORE INTO probe_management VALUES (?,0)", [(e,) for e in new]))
+                self.managed.update(new)
+
+    async def scan_tick(self, _now):
+        await self.discover()
+
+    async def add(self, entity):
+        state = self.hass.states.get(entity)
+        if not entity.startswith("device_tracker.") or (entity not in self.excluded and (state is None or state.attributes.get("source_type") != "gps")):
+            raise ValueError("not_gps")
+        async with self.lock:
+            if not self.active:
+                raise ValueError("not_loaded")
+            await self.run(lambda c: c.execute("INSERT INTO probe_management VALUES (?,0) ON CONFLICT(entity_id) DO UPDATE SET excluded=0", (entity,)))
+            self.excluded.discard(entity)
+            self.managed.add(entity)
+
+    async def remove(self, entity, delete_history):
+        async with self.lock:
+            if entity not in self.managed:
+                raise ValueError("not_managed")
+            def remove_db(c):
+                c.execute("INSERT INTO probe_management VALUES (?,1) ON CONFLICT(entity_id) DO UPDATE SET excluded=1", (entity,))
+                c.execute("INSERT OR IGNORE INTO probe_paused VALUES (?)", (entity,))
+                if delete_history:
+                    c.execute("DELETE FROM probe_devices WHERE entity_id=?", (entity,))
+                else:
+                    now = now_ms()
+                    c.execute("UPDATE probe_devices SET consent_at=?,import_from=?,history_cursor=? WHERE entity_id=?", (now,now,now,entity))
+            await self.run(remove_db)
+            self.devices.discard(entity)
+            self.managed.discard(entity)
+            self.excluded.add(entity)
+            self.listen()
+            await self.hass.async_add_executor_job(self.checkpoint)
 
     @callback
     def spawn(self, coro):
@@ -151,24 +208,36 @@ class Store:
         if not entity.startswith("device_tracker.") or state is None or state.attributes.get("source_type") != "gps":
             raise ValueError("not_gps")
         async with self.lock:
-            if not self.active:
-                raise ValueError("not_loaded")
+            if not self.active or entity not in self.managed:
+                raise ValueError("not_managed")
+            if entity in self.devices:
+                return
             now = now_ms()
-            cutoff = now - WINDOW if import_history else now
-            await self.run(lambda c: c.execute("INSERT OR IGNORE INTO probe_devices VALUES (?,?,?,?)",
-                                                (entity, now, cutoff, cutoff)))
+            def enable_db(c):
+                paused = c.execute("SELECT 1 FROM probe_paused WHERE entity_id=?", (entity,)).fetchone()
+                cutoff = now - WINDOW if import_history and not paused else now
+                c.execute("INSERT INTO probe_devices VALUES (?,?,?,?) ON CONFLICT(entity_id) DO UPDATE SET consent_at=excluded.consent_at,import_from=excluded.import_from,history_cursor=excluded.history_cursor", (entity,now,cutoff,cutoff))
+                c.execute("DELETE FROM probe_paused WHERE entity_id=?", (entity,))
+            await self.run(enable_db)
             self.devices.add(entity)
             self.listen()
         self.spawn(self.backfill(entity))
 
     async def disable(self, entity):
         async with self.lock:
-            await self.run(lambda c: c.execute("DELETE FROM probe_devices WHERE entity_id=?", (entity,)))
+            def pause_db(c):
+                c.execute("INSERT OR IGNORE INTO probe_paused VALUES (?)", (entity,))
+                now = now_ms()
+                c.execute("UPDATE probe_devices SET consent_at=?,import_from=?,history_cursor=? WHERE entity_id=?", (now,now,now,entity))
+            await self.run(pause_db)
             self.devices.discard(entity)
             self.listen()
             await self.hass.async_add_executor_job(self.checkpoint)
 
     async def backfill(self, entity):
+        if entity in self.importing:
+            return
+        self.importing.add(entity)
         try:
             from homeassistant.components.recorder import get_instance, history
             async with self.lock:
@@ -210,6 +279,8 @@ class Store:
         except Exception:
             self.errors += 1
             _LOGGER.warning("Location probe Recorder import failed (no coordinates logged)")
+        finally:
+            self.importing.discard(entity)
 
     def checkpoint(self):
         with closing(sqlite3.connect(self.path, timeout=10)) as con:
@@ -248,6 +319,8 @@ class Store:
             self.unsub()
         if self.timer:
             self.timer()
+        if self.discovery:
+            self.discovery()
         if self.tasks:
             await asyncio.gather(*list(self.tasks), return_exceptions=True)
         async with self.lock:
