@@ -4,7 +4,7 @@ from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from .location_store import Store
+from .location_store import Store, position
 DOMAIN = "luxe_location_probe"
 PANEL = "luxe-location-probe"
 @websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/config"})
@@ -54,7 +54,7 @@ async def ws_storage(hass, connection, msg):
             state = hass.states.get(entity)
             devices.append({"entity_id":entity,"name":state.name if state else entity,
                 "managed":entity in store.managed,"enabled":entity in store.devices,
-                "available":bool(state and state.attributes.get("source_type")=="gps" and state.state not in ("unknown","unavailable"))})
+                "available":position(state) is not None})
         connection.send_result(msg["id"], {"candidates":devices,"diagnostics":await store.diagnostics()})
     except ValueError:
         connection.send_error(msg["id"], "invalid_device", "Invalid GPS device")
@@ -75,7 +75,7 @@ async def async_setup_entry(hass, entry):
     await store.start()
     state["store"] = store
     state["active"] = dict(entry.data)
-    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置地图测试", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.0.5", require_admin=True, embed_iframe=True)
+    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置地图测试", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.0.6", require_admin=True, embed_iframe=True)
     return True
 async def async_unload_entry(hass, entry):
     frontend.async_remove_panel(hass, PANEL)

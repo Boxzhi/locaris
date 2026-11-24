@@ -1,4 +1,4 @@
-const VERSION='0.0.5';
+const VERSION='0.0.6';
 const POINT=[116.397428,39.90923];
 let sdkPromise;
 function sdk(config){
@@ -51,7 +51,7 @@ class Probe extends HTMLElement{
         const heading=document.createElement('h4');heading.textContent=managed?'已添加设备':'已移除设备';list.append(heading);
         for(const d of r.candidates.filter(x=>x.managed===managed)){
           const row=document.createElement('div');row.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0';
-          const label=document.createElement('span');label.textContent=d.name+' · '+(d.available?'定位实体可用':'暂无定位')+' · '+(d.enabled?'记录中':'未记录');row.append(label);
+          const label=document.createElement('span');label.textContent=d.name+' · '+(d.available?'具有有效定位':'暂无定位')+' · '+(d.enabled?'记录中':'未记录');row.append(label);
           if(!managed){button(row,'重新添加',()=>this.storage('add',d.entity_id));}
           else{
             if(d.enabled)button(row,'停止记录',()=>this.storage('disable',d.entity_id));

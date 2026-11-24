@@ -74,6 +74,7 @@ class Store:
                 con.executescript("""
                     CREATE TABLE IF NOT EXISTS probe_management (entity_id TEXT PRIMARY KEY, excluded INTEGER NOT NULL DEFAULT 0);
                     CREATE TABLE IF NOT EXISTS probe_paused (entity_id TEXT PRIMARY KEY);
+                    CREATE TABLE IF NOT EXISTS probe_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                     CREATE TABLE IF NOT EXISTS probe_devices (
                       entity_id TEXT PRIMARY KEY,
                       consent_at INTEGER NOT NULL,
@@ -100,6 +101,7 @@ class Store:
         self.managed = {e for e, excluded in management if not excluded}
         self.excluded = {e for e, excluded in management if excluded}
         self.devices = set(recording) & self.managed
+        await self.migrate_discovery()
         await self.discover()
         self.listen()
         self.timer = async_track_time_interval(self.hass, self.periodic, timedelta(hours=1))
@@ -109,13 +111,37 @@ class Store:
         for entity in sorted(self.devices):
             self.spawn(self.backfill(entity))
 
+    async def migrate_discovery(self):
+        # v0.0.5 automatically admitted GPS entities without coordinates.
+        # Only remove legacy unrecorded entries whose current GPS entity lacks
+        # a valid position. Exclusions and existing historical data are retained.
+        candidates = {e for e in self.managed
+                      if (state := self.hass.states.get(e)) is not None
+                      and state.attributes.get("source_type") == "gps"
+                      and position(state) is None}
+        def migrate(c):
+            if c.execute("SELECT 1 FROM probe_metadata WHERE key='valid_position_discovery_v1'").fetchone():
+                return []
+            removed = []
+            for e in candidates:
+                if c.execute("SELECT 1 FROM probe_devices WHERE entity_id=?", (e,)).fetchone() or c.execute("SELECT 1 FROM probe_paused WHERE entity_id=?", (e,)).fetchone():
+                    continue
+                c.execute("DELETE FROM probe_management WHERE entity_id=? AND excluded=0", (e,))
+                removed.append(e)
+            c.execute("INSERT INTO probe_metadata VALUES ('valid_position_discovery_v1','1')")
+            return removed
+        async with self.lock:
+            removed = await self.run(migrate)
+            self.managed.difference_update(removed)
+
     async def discover(self):
         candidates = {s.entity_id for s in self.hass.states.async_all("device_tracker")
-                      if s.attributes.get("source_type") == "gps"}
+                      if position(s) is not None}
         async with self.lock:
             if not self.active:
                 return
-            new = candidates - self.managed - self.excluded
+            new = {e for e in candidates - self.managed - self.excluded
+                   if position(self.hass.states.get(e)) is not None}
             if new:
                 await self.run(lambda c: c.executemany("INSERT OR IGNORE INTO probe_management VALUES (?,0)", [(e,) for e in new]))
                 self.managed.update(new)
