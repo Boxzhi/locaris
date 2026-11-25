@@ -1,8 +1,51 @@
-const VERSION='0.1.53-preview';
+const VERSION='0.1.54-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
 let sdkPromise,sdkSession,sdkConfigPromise;
+const WEBGL_SAFE_KEY='luxe_location.webgl_safe_session';
+let sdkDiagnostic={version:VERSION,sdk_status:'not_loaded'};
+function probeWebGL(strict){
+  // Use separate canvases for different context attributes and release probes.
+  for(const type of ['webgl','experimental-webgl','webgl2']){
+    let canvas,gl;
+    try{
+      canvas=document.createElement('canvas');canvas.width=canvas.height=1;
+      gl=canvas.getContext(type,{failIfMajorPerformanceCaveat:strict});
+      if(gl&&!gl.isContextLost())return type;
+    }catch(e){}finally{
+      if(gl){try{gl.getExtension('WEBGL_lose_context')?.loseContext();}catch(e){}}
+      if(canvas){canvas.width=canvas.height=0;}
+    }
+  }
+  return null;
+}
+function configureWebGL(){
+  const strict=probeWebGL(true),relaxed=strict||probeWebGL(false);
+  let safe=false;try{safe=sessionStorage.getItem(WEBGL_SAFE_KEY)==='1';}catch(e){}
+  const force=!!(!strict&&relaxed&&!safe);
+  if(force)window.forceWebGL=true;
+  else if(window.forceWebGL===true)delete window.forceWebGL;
+  if(safe)window.forbidenWebGL=true;
+  sdkDiagnostic={version:VERSION,sdk_status:'loading',webgl_strict:strict,webgl_relaxed:relaxed,
+    relaxed_tested:!strict,force_webgl:force,safe_session:safe,sdk_is_webgl:null,
+    requested_layer:null,reported_style:null,map_status:'not_created'};
+}
+function recordMapDiagnostic(map,layer){
+  sdkDiagnostic.requested_layer=layer;
+  try{
+    const style=map.getMapStyle?.();
+    sdkDiagnostic.reported_style=['amap://styles/normal','amap://styles/dark','normal','dark'].includes(style)?style:null;
+  }catch(e){sdkDiagnostic.reported_style=null;}
+}
+function restartRaster(){
+  try{sessionStorage.setItem(WEBGL_SAFE_KEY,'1');}catch(e){return false;}
+  location.reload();return true;
+}
+function restartAutomatic(){
+  try{sessionStorage.removeItem(WEBGL_SAFE_KEY);}catch(e){return false;}
+  location.reload();return true;
+}
 const expiredMapSession=e=>e?.code==='session_expired'||String(e?.message||e).includes('Map session expired; reload panel');
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<TIMING.MAP_CONFIG_TTL_MS)return sdkSession.config;
@@ -13,12 +56,13 @@ function sdk(config){
   if(sdkPromise)return sdkPromise;
   sdkPromise=new Promise((resolve,reject)=>{
     if(window.AMap){reject(new Error('页面已加载其他高德 SDK，请刷新页面'));return;}
+    configureWebGL();
     window._AMapSecurityConfig={serviceHost:new URL(config.proxy_path,location.origin).href};
     const s=document.createElement('script');
-    const timer=setTimeout(()=>{s.remove();reject(new Error('SDK 加载超时'));},TIMING.SDK_TIMEOUT_MS);
+    const timer=setTimeout(()=>{s.remove();sdkDiagnostic.sdk_status='timeout';reject(new Error('SDK 加载超时'));},TIMING.SDK_TIMEOUT_MS);
     s.src='https://webapi.amap.com/maps?v=2.0&key='+encodeURIComponent(config.map_key);
-    s.onload=()=>{clearTimeout(timer);window.AMap?resolve(window.AMap):reject(new Error('SDK 对象不存在'));};
-    s.onerror=()=>{clearTimeout(timer);s.remove();reject(new Error('SDK 网络加载失败'));};
+    s.onload=()=>{clearTimeout(timer);const A=window.AMap;if(A){sdkDiagnostic.sdk_status='ready';sdkDiagnostic.sdk_is_webgl=typeof A.Browser?.isWebGL==='boolean'?A.Browser.isWebGL:null;resolve(A);}else{sdkDiagnostic.sdk_status='missing';reject(new Error('SDK 对象不存在'));}};
+    s.onerror=()=>{clearTimeout(timer);s.remove();sdkDiagnostic.sdk_status='network_error';reject(new Error('SDK 网络加载失败'));};
     document.head.appendChild(s);
   }).catch(e=>{sdkPromise=null;throw e;});
   return sdkPromise;
@@ -388,8 +432,8 @@ class LocationPanel extends HTMLElement{
       this.mapListeners=[];
       on('dragstart',()=>{this.cancelCamera();this.liveExpanded=null;});
       if(this.page==='live'){on('zoomend',()=>this.scheduleCluster());on('moveend',()=>this.scheduleCluster());}
-      this.layer(this.mapLayer||'standard');if(this.page==='live')this.syncMarkers();else this.paintHistory();if(valid())this.mapStatus(target);
-    }catch(e){const current=valid();if(map&&this.map===map)this.destroyMap();if(current&&target.isConnected){this.mapSessionExpired=expiredMapSession(e);this.mapStatus(target,this.mapSessionExpired?'地图会话已失效，请重新加载':'地图加载失败',()=>this.retryMap(target),this.mapSessionExpired?'重新加载':'重试');}}
+      this.layer(this.mapLayer||'standard');sdkDiagnostic.map_status='created';recordMapDiagnostic(map,this.appliedLayer);if(this.page==='live')this.syncMarkers();else this.paintHistory();if(valid())this.mapStatus(target);
+    }catch(e){const current=valid();if(map&&this.map===map)this.destroyMap();if(current&&target.isConnected){sdkDiagnostic.map_status='failed';this.mapSessionExpired=expiredMapSession(e);const safeRetry=!this.mapSessionExpired&&sdkDiagnostic.force_webgl;this.mapStatus(target,this.mapSessionExpired?'地图会话已失效，请重新加载':safeRetry?'地图加载失败，可使用栅格兼容模式重试':'地图加载失败',()=>{if(safeRetry){if(!restartRaster())this.mapStatus(target,'无法保存兼容模式，请重新打开位置中心');}else this.retryMap(target);},this.mapSessionExpired?'重新加载':safeRetry?'兼容模式重试':'重试');}}
   }
   destroyMap(){
     this.mapBuild=null;this.mapRenewPending=null;this.mapSessionError=false;this.mapSessionExpired=false;this.mapRenewRetryAt=0;this.cancelCamera();if(this.clusterFrame!=null){cancelAnimationFrame(this.clusterFrame);this.clusterFrame=null;}
@@ -848,8 +892,19 @@ class LocationPanel extends HTMLElement{
       }
       this.appliedLayer=id;
     }
+    if(map)recordMapDiagnostic(map,id);
     this.mapLayer=id;
     for(const b of this.querySelectorAll('[data-layer]'))b.setAttribute('aria-pressed',String(b.dataset.layer===id));
+  }
+  drawMapDiagnostic(){
+    const details=el('details');details.dataset.mapDiagnostic='1';
+    details.append(el('summary','地图渲染诊断'));
+    const output=el('pre',JSON.stringify(sdkDiagnostic,null,2));output.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;font-size:12px';
+    details.append(output);
+    details.append(el('p','SDK 能力和样式报告不代表实际画面已成功渲染。诊断不包含定位坐标、地图密钥或代理地址。','lx-muted'));
+    details.append(button('输出诊断到控制台',()=>console.info('[LUXE Location] '+JSON.stringify(sdkDiagnostic))));
+    if(sdkDiagnostic.safe_session)details.append(button('恢复自动渲染检测',()=>{if(!restartAutomatic())this.status('无法恢复自动检测，请重新打开位置中心');}));
+    return details;
   }
   drawRuntimePolicy(){
     const card=el('section',undefined,'lx-card');card.append(el('h2','运行策略'));
@@ -892,7 +947,7 @@ class LocationPanel extends HTMLElement{
 
       const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');layer.dataset.controlKey='map-layer';for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
       const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.dataset.controlKey='show-header';uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('luxe_location.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow);stack.prepend(ui);
-      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；地址按需通过高德解析，缓存于 HA 内存和 SQLite；地图安全代理使用短期会话路径。','lx-muted'));stack.append(about);
+      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；地址按需通过高德解析，缓存于 HA 内存和 SQLite；地图安全代理使用短期会话路径。','lx-muted'));about.append(this.drawMapDiagnostic());stack.append(about);
     }
     main.scrollTop=scroll;
     if(focused){const control=Array.from(main.querySelectorAll('[data-control-key]')).find(v=>v.dataset.controlKey===focused);control?.focus({preventScroll:true});}
