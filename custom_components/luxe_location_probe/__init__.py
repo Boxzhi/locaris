@@ -13,6 +13,7 @@ from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import callback
 from .location_store import Store, position
+from .history_logic import collapse_history
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "luxe_location_probe"
 PANEL = "luxe-location-probe"
@@ -98,7 +99,7 @@ async def ws_storage(hass, connection, msg):
         _LOGGER.warning("Location storage operation failed (no coordinates logged)")
         connection.send_error(msg["id"], "storage_failed", "Storage operation failed")
 
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/history", vol.Required("entity_id"): str, vol.Required("start"): int, vol.Required("end"): int})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/history", vol.Required("entity_id"): str, vol.Required("start"): int, vol.Required("end"): int, vol.Optional("collapse_repeated", default=False): bool})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_history(hass, connection, msg):
@@ -116,10 +117,14 @@ async def ws_history(hass, connection, msg):
             connection.send_error(msg["id"], "invalid_device", "Device not managed")
             return
         def read(con):
-            rows = con.execute("SELECT recorded_at,latitude,longitude,accuracy FROM probe_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at LIMIT 10001", (entity,max(start,now_ms()-WINDOW),min(end,now_ms()+1))).fetchall()
-            return [dict(r) for r in rows]
+            sql = "SELECT recorded_at,latitude,longitude,accuracy FROM probe_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at"
+            args = (entity,max(start,now_ms()-WINDOW),min(end,now_ms()+1))
+            if msg["collapse_repeated"]:
+                return collapse_history(con.execute(sql,args))
+            rows = con.execute(sql+" LIMIT 10001",args).fetchall()
+            return [dict(r) for r in rows[:10000]], 0, len(rows)>10000
         try:
-            rows = await store.run(read)
+            rows, hidden, truncated = await store.run(read)
         except Exception:
             _LOGGER.warning("Location history query failed (no coordinates logged)")
             connection.send_error(msg["id"], "history_failed", "History query failed")
@@ -127,7 +132,7 @@ async def ws_history(hass, connection, msg):
     if not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store or entity not in store.managed:
         connection.send_error(msg["id"], "not_loaded", "Storage not ready")
         return
-    connection.send_result(msg["id"], {"points":rows[:10000],"truncated":len(rows)>10000})
+    connection.send_result(msg["id"], {"points":rows,"truncated":truncated,"collapsed":hidden})
 
 def gcj(lon, lat):
     if not (72.004 <= lon <= 137.8347 and .8293 <= lat <= 55.8271):
@@ -349,7 +354,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_sessions"] = {}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.30.1-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.31-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)

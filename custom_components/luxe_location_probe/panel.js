@@ -1,4 +1,4 @@
-const VERSION='0.1.30.1-preview';
+const VERSION='0.1.31-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -463,10 +463,10 @@ class LocationPanel extends HTMLElement{
     const start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
     timeline.append(el('p','正在加载…','lx-muted'));
     try{
-      const r=await this._hass.callWS({type:NS+'history',entity_id:select.value,start:start.getTime(),end:end.getTime()});
+      const r=await this._hass.callWS({type:NS+'history',entity_id:select.value,start:start.getTime(),end:end.getTime(),collapse_repeated:true});
       if(this.page!=='history'||seq!==this.historySeq||!timeline.isConnected)return;
       this.historyData=r.points;
-      const title=el('div',undefined,'lx-title');title.append(el('h2','定位时间轴'),el('span',r.points.length+' 个定位点'+(r.truncated?' · 已截断':''),'lx-muted'));timeline.replaceChildren(title);
+      const title=el('div',undefined,'lx-title'),count=el('span',r.points.length+' 个定位点'+(r.truncated?' · 已截断':''),'lx-muted');if(r.collapsed)count.title='已合并 '+r.collapsed+' 条连续相同坐标及精度的记录，原始数据仍保留';title.append(el('h2','定位时间轴'),count);timeline.replaceChildren(title);
       if(!r.points.length)timeline.append(el('p','当日暂无定位记录','lx-muted'));
       let shown=0,expanded=null,groups=this.historyGroups(r.points),limit=50,rendering=false;
       const coordByTime=new Map(),timesByCoord=new Map();for(const p of r.points){const key=p.latitude+','+p.longitude;coordByTime.set(p.recorded_at,key);if(!timesByCoord.has(key))timesByCoord.set(key,[]);timesByCoord.get(key).push(p.recorded_at);}
