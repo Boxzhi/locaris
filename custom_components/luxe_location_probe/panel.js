@@ -1,4 +1,4 @@
-const VERSION='0.1.15-preview';
+const VERSION='0.1.16-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -609,7 +609,7 @@ class LocationPanel extends HTMLElement{
       const copy=button('复制布局诊断',async()=>{const report=JSON.stringify(this.layoutDiagnostics(),null,2);try{await navigator.clipboard.writeText(report);this.status('布局诊断已复制');}catch(e){output.hidden=false;output.value=report;output.focus();output.select();}});
       layoutCard.append(copy,output);stack.append(layoutCard);
       const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
-      const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('luxe_location.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow,el('p','仅影响当前浏览器或 App，隐藏后仍可通过菜单打开侧边栏。','lx-muted'));stack.prepend(ui);
+      const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('luxe_location.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow);stack.prepend(ui);
       const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；地址按需通过高德解析，缓存于 HA 内存和 SQLite；地图安全代理使用短期会话路径。','lx-muted'));stack.append(about);
     }
   }
