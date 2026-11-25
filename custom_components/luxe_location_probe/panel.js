@@ -1,4 +1,4 @@
-const VERSION='0.1.22-preview';
+const VERSION='0.1.22.1-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -517,11 +517,11 @@ class LocationPanel extends HTMLElement{
     this.liveAddressCache??=new Map();let entry=this.liveAddressCache.get(key);
     if(!entry||Date.now()-entry.at>300000){
       entry={at:Date.now(),entity:d.entity_id,generation:d.recording_generation,promise:this._hass.callWS({type:NS+'address',entity_id:d.entity_id,expected_updated_at:p.updated_at,expected_latitude:p.latitude,expected_longitude:p.longitude}).then(r=>r.address||null).catch(()=>null)};
-      if(this.liveAddressCache.size>=128)this.liveAddressCache.delete(this.liveAddressCache.keys().next().value);
+      if(this.liveAddressCache.size>=128&&!this.liveAddressCache.has(key))this.liveAddressCache.delete(this.liveAddressCache.keys().next().value);
       this.liveAddressCache.set(key,entry);
     }
     const address=await entry.promise;
-    if(target.isConnected&&this.page==='live'&&this.liveAddressCache.get(key)===entry)target.textContent=address?(full?address:address.replace(/^(?:[^省]{2,8}省|内蒙古自治区|广西壮族自治区|宁夏回族自治区|新疆维吾尔自治区|西藏自治区)/,'')):'地址暂不可用';
+    if(target.isConnected&&this.page==='live'&&(this.liveAddressCache.get(key)===entry||(!address&&!this.liveAddressCache.has(key))))target.textContent=address?(full?address:address.replace(/^(?:[^省]{2,8}省|内蒙古自治区|广西壮族自治区|宁夏回族自治区|新疆维吾尔自治区|西藏自治区)/,'')):'地址暂不可用';
     if(!address&&this.liveAddressCache.get(key)===entry)this.liveAddressCache.delete(key);
   }
   color(id){
@@ -544,7 +544,7 @@ class LocationPanel extends HTMLElement{
     if(!this.map||this.page!=='live')return;
     const A=this.A,map=this.map,devices=(this.data?.candidates||[]).filter(d=>d.managed&&d.enabled&&d.position);
     if(!this.markers)this.markers=new Map();
-    const ids=new Set(devices.map(d=>d.entity_id));if(this.liveExpanded&&[...this.liveExpanded].some(id=>!ids.has(id)))this.liveExpanded=null;
+    const ids=new Set(devices.map(d=>d.entity_id));if(this.liveExpanded&&[...this.liveExpanded].some(id=>!ids.has(id))){this.liveExpanded=null;this.cancelCamera();}if(this.cameraMoving&&[...this.markers.keys()].some(id=>!ids.has(id)))this.cancelCamera();
     for(const [id,m] of this.markers)if(!ids.has(id)){map.remove([m.marker,...(m.circle?[m.circle]:[])]);this.markers.delete(id);}
     for(const d of devices){
       const p=d.position,xy=this.gcj(p.longitude,p.latitude),color=this.color(d.entity_id);
@@ -584,7 +584,7 @@ class LocationPanel extends HTMLElement{
       const t=Math.min(1,(now-begin)/duration);let p=ease(t),z=startZoom+(zoom-startZoom)*p;
       if(far){if(t<.25){p=0;z=startZoom+(mid-startZoom)*ease(t/.25);}else if(t<.7){p=ease((t-.25)/.45);z=mid;}else{p=1;z=mid+(zoom-mid)*ease((t-.7)/.3);}}
       map.setZoomAndCenter(z,[from[0]+(xy[0]-from[0])*p,from[1]+(xy[1]-from[1])*p],true);
-      if(t<1)this.cameraFrame=requestAnimationFrame(tick);else{this.cameraFrame=null;this.cameraMoving=false;map.setZoomAndCenter(zoom,xy,true);if(this.page==='live')this.clusterLive();done?.();}
+      if(t<1)this.cameraFrame=requestAnimationFrame(tick);else{this.cameraFrame=null;this.cameraMoving=false;map.setZoomAndCenter(zoom,xy,true);if(this.page==='live')this.scheduleCluster();done?.();}
       }catch(e){if(seq===this.cameraSeq){this.cancelCamera();if(this.page==='live')this.scheduleCluster();}}
     };this.cameraFrame=requestAnimationFrame(tick);
   }
