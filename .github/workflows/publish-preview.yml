@@ -1,0 +1,28 @@
+name: Publish Locaris v0.2.4-preview
+on:
+  push:
+    branches: ['release/v0.2.4-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.4-preview >/dev/null 2>&1; then
+            exit 0
+          fi
+          cat > /tmp/notes.md <<'EOF'
+          ## 实时位置与历史记录解耦
+          - 所有已管理且定位可用的设备均可查看实时位置、地图标记及地址。
+          - 历史记录仍默认关闭，未开启历史记录的设备不写入历史定位或实时地址缓存至数据库。
+          - 保留已有历史轨迹、运行策略、30 天保留期限及卸载清理机制。
+          - 新增实时地址解析与并发状态变化回归测试。
+          - CI 已通过，真实 HA 环境回归待验收。
+          EOF
+          gh release create v0.2.4-preview --target 845039c016b46addd19663f45854025e15950de1 --title "Locaris v0.2.4-preview" --notes-file /tmp/notes.md --prerelease --latest=false
