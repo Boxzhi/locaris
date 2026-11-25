@@ -38,14 +38,6 @@ def point(state):
         return None
     return (int(stamp.timestamp() * 1000), *p)
 
-def changed_point(old, new):
-    """A changed valid GPS payload, not proof of a fresh hardware fix."""
-    previous = position(old)
-    current = point(new)
-    if previous is None or current is None or previous == current[1:]:
-        return None
-    return current
-
 class Store:
     def __init__(self, hass):
         self.hass = hass
@@ -57,6 +49,7 @@ class Store:
         self.discovery = None
         self.importing = {}
         self.generations = {}
+        self.last_valid = {}
         self.initialized = False
         self.unsub = None
         self.timer = None
@@ -205,6 +198,7 @@ class Store:
     @callback
     def invalidate(self, entity):
         self.generations[entity] = self.generations.get(entity, 0) + 1
+        self.last_valid.pop(entity, None)
 
     @callback
     def schedule_backfill(self, entity):
@@ -228,6 +222,10 @@ class Store:
             self.unsub()
             self.unsub = None
         if self.active and self.devices:
+            for entity in self.devices:
+                p = position(self.hass.states.get(entity))
+                if p is not None:
+                    self.last_valid.setdefault(entity, p)
             self.unsub = async_track_state_change_event(self.hass, list(self.devices), self.changed)
 
     @callback
@@ -236,9 +234,18 @@ class Store:
             return
         entity = event.data["entity_id"]
         new, old = event.data.get("new_state"), event.data.get("old_state")
-        p = changed_point(old, new)
-        # Ignore restored/first available snapshots; Recorder may recover actual changes.
-        if p is None or entity not in self.devices:
+        if entity not in self.devices:
+            return
+        p = point(new)
+        if p is None:
+            return
+        previous = position(old)
+        if previous is None:
+            previous = self.last_valid.get(entity)
+        self.last_valid[entity] = p[1:]
+        # On recovery, retain genuinely changed coordinates compared with the
+        # last observed valid payload; a first unknown snapshot is not a fix.
+        if previous is None or previous == p[1:]:
             return
         self.spawn(self.write(entity, p, self.generations.get(entity, 0)))
 
@@ -308,30 +315,35 @@ class Store:
             async with self.lock:
                 if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
                     return
-                row = await self.run(lambda c: tuple(c.execute("SELECT consent_at,import_from,history_cursor FROM probe_devices WHERE entity_id=?", (entity,)).fetchone()))
+                row = await self.run(lambda c: c.execute("SELECT consent_at,import_from,history_cursor FROM probe_devices WHERE entity_id=?", (entity,)).fetchone())
+            if row is None:
+                return
             consent, earliest, cursor = row
             end = now_ms() - 120000
             start = max(earliest, cursor - 300000, now_ms() - WINDOW)
-            # Query in bounded daily windows, preserving original HA record timestamps.
+            # Query with one millisecond of overlap at strict Recorder boundaries.
+            # The explicit half-open filter below prevents synthetic or future rows.
+            # Carry the last valid payload across windows, not across consent changes.
+            previous = None
             while start < end and self.active and self.generations.get(entity, 0) == generation:
                 stop = min(start + 86400000, end)
-                begin_dt = datetime.fromtimestamp(start / 1000, timezone.utc)
+                begin_dt = datetime.fromtimestamp((start - 1) / 1000, timezone.utc)
                 end_dt = datetime.fromtimestamp(stop / 1000, timezone.utc)
                 def read():
                     result = history.get_significant_states(self.hass, begin_dt, end_dt, [entity],
                         include_start_time_state=False, significant_changes_only=False,
                         minimal_response=False, no_attributes=False)
                     rows = []
-                    prev = None
+                    prev = previous
                     for state in result.get(entity, []):
                         p = point(state)
-                        if p is None:
+                        if p is None or not start <= p[0] < stop:
                             continue
                         if prev is None or p[1:] != prev:
                             rows.append(p)
                         prev = p[1:]
-                    return rows
-                rows = await get_instance(self.hass).async_add_executor_job(read)
+                    return rows, prev
+                rows, previous = await get_instance(self.hass).async_add_executor_job(read)
                 async with self.lock:
                     if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
                         return
@@ -439,3 +451,4 @@ class Store:
                     await self.hass.async_add_executor_job(self.checkpoint)
                     self.initialized = False
             self.importing.clear()
+            self.last_valid.clear()
