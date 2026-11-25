@@ -164,7 +164,7 @@ class Store:
         if not entity.startswith("device_tracker.") or (entity not in self.excluded and (state is None or state.attributes.get("source_type") != "gps")):
             raise ValueError("not_gps")
         async with self.lock:
-            if not self.active:
+            if not self.active or not self.ready:
                 raise ValueError("not_loaded")
             await self.run(lambda c: c.execute("INSERT INTO probe_management VALUES (?,0) ON CONFLICT(entity_id) DO UPDATE SET excluded=0", (entity,)))
             self.excluded.discard(entity)
@@ -216,7 +216,7 @@ class Store:
         if self.unsub:
             self.unsub()
             self.unsub = None
-        if self.devices:
+        if self.active and self.devices:
             self.unsub = async_track_state_change_event(self.hass, list(self.devices), self.changed)
 
     @callback
