@@ -76,14 +76,18 @@ const TABS=[['live','实时位置','mdi:map-marker-radius-outline'],['history','
 const NS='locaris/';
 const pad2=n=>String(n).padStart(2,'0');
 function formatClock(d){return [d.getHours(),d.getMinutes(),d.getSeconds()].map(pad2).join(':');}
+function formatDay(d,now=new Date()){
+  const yesterday=new Date(now);yesterday.setDate(yesterday.getDate()-1);
+  if(d.toDateString()===now.toDateString())return '今日';
+  if(d.toDateString()===yesterday.toDateString())return '昨日';
+  const md=pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
+  return d.getFullYear()===now.getFullYear()?md:d.getFullYear()+'-'+md;
+}
 function fmt(t,now=new Date(),unknown='—'){
   if(t==null)return unknown;
   const d=new Date(t);if(!Number.isFinite(d.getTime()))return unknown;
-  const yesterday=new Date(now);yesterday.setDate(yesterday.getDate()-1);
-  const time=formatClock(d),md=pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
-  if(d.toDateString()===now.toDateString())return time;
-  if(d.toDateString()===yesterday.toDateString())return '昨日 '+time;
-  return (d.getFullYear()===now.getFullYear()?md:d.getFullYear()+'-'+md)+' '+time;
+  const day=formatDay(d,now),time=formatClock(d);
+  return day==='今日'?time:day+' '+time;
 }
 const el=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
 const icon=name=>{const paths={'mdi:menu':'M4 6h16M4 12h16M4 18h16','mdi:map-marker-radius-outline':'M12 21s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z M12 6a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:map-marker-path':'M5 6a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M19 14a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M7 8h7a3 3 0 0 1 0 6H8a3 3 0 0 0 0 6h7','mdi:cellphone':'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z M10 18h4','mdi:cog-outline':'M10 2h4l.7 3 2 .9 2.7-1.6 2 3.5-2.3 2.1v2.2l2.3 2.1-2 3.5-2.7-1.6-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.6-2-3.5L5 12.1V9.9L2.7 7.8l2-3.5 2.7 1.6 2-.9z M12 8a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:dots-horizontal':'M5 12h.1M12 12h.1M19 12h.1','tablet':'M5 3h14v18H5z M10 18h4','layers':'M3 8l9-5 9 5-9 5z M3 12l9 5 9-5 M3 16l9 5 9-5','locate':'M12 2v4 M12 18v4 M2 12h4 M18 12h4 M12 6a6 6 0 1 0 0 12 6 6 0 1 0 0-12'};const ns='http://www.w3.org/2000/svg',e=document.createElementNS(ns,'svg'),p=document.createElementNS(ns,'path');e.setAttribute('viewBox','0 0 24 24');e.setAttribute('width','22');e.setAttribute('height','22');e.setAttribute('aria-hidden','true');p.setAttribute('d',paths[name]||paths['mdi:cellphone']);p.setAttribute('fill','none');p.setAttribute('stroke','currentColor');p.setAttribute('stroke-width',name==='mdi:dots-horizontal'?'4':'1.8');p.setAttribute('stroke-linecap','round');p.setAttribute('stroke-linejoin','round');e.append(p);return e;};
@@ -493,7 +497,7 @@ class LocationPanel extends HTMLElement{
       const dismiss=()=>{popup.hidden=true;trigger.setAttribute('aria-expanded','false');document.removeEventListener('pointerdown',outside,true);if(this.calendarOutside===outside)this.calendarOutside=null;};
       const outside=e=>{if(!(e.composedPath?.()||[]).includes(calendar)&&!calendar.contains(e.target))dismiss();};this.calendarDismiss=dismiss;
       let month=new Date(day.value+'T00:00:00');month.setDate(1);
-      const updateLabel=()=>{trigger.replaceChildren(el('span','▦'),el('span',day.value+(day.value===maxDate?' · 今日':day.value===local(yesterday)?' · 昨日':'')),el('span','⌄','lx-date-arrow'));};
+      const updateLabel=()=>{trigger.replaceChildren(el('span','▦'),el('span',formatDay(new Date(day.value+'T00:00:00'))),el('span','⌄','lx-date-arrow'));};
       const choose=value=>{if(value<minDate||value>maxDate)return;const changed=day.value!==value;day.value=value;dismiss();updateLabel();trigger.focus({preventScroll:true});if(changed)this.loadHistory();};
       const drawCalendar=()=>{
         popup.replaceChildren();const header=el('div',undefined,'lx-cal-header');

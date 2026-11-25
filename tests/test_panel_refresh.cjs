@@ -79,7 +79,7 @@ test('removed devices section appears only for nonzero count and preserves open 
 test('shared timestamp formats today, yesterday, earlier date and previous year',()=>{
   const context={};vm.createContext(context);
   const start=source.indexOf('const pad2='),end=source.indexOf('const el=',start);
-  vm.runInContext(source.slice(start,end)+'\nthis.format=fmt;this.clock=formatClock;',context);
+  vm.runInContext(source.slice(start,end)+'\nthis.format=fmt;this.clock=formatClock;this.day=formatDay;',context);
   const fmt=context.format;
   const now=new Date(2026,10,25,18,2,0);
   assert.equal(fmt(new Date(2026,10,25,0,3,4),now),'00:03:04');
@@ -90,6 +90,12 @@ test('shared timestamp formats today, yesterday, earlier date and previous year'
   assert.equal(fmt(null,now,'定位时间未知'),'定位时间未知');
   assert.equal(fmt(NaN,now),'—');
   assert.equal(context.clock(new Date(2026,10,25,0,0,0)),'00:00:00');
+  assert.equal(context.day(new Date(2026,10,25),now),'今日');
+  assert.equal(context.day(new Date(2026,10,24),now),'昨日');
+  assert.equal(context.day(new Date(2026,10,23),now),'11-23');
+  assert.equal(context.day(new Date(2025,10,23),now),'2025-11-23');
+  assert.match(source,/formatDay\(new Date\(day.value\+'T00:00:00'\)\)/);
+  assert.match(source,/fmt\(d.last_cleanup\)/);
 });
 test('empty history reference hides count and redundant explanation, retains timestamp',()=>{
   const start=source.indexOf('if(!r.points.length&&this.historyReference){');
