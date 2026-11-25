@@ -124,7 +124,7 @@ async def ws_storage(hass, connection, msg):
             await store.enable(msg.get("entity_id",""), msg["import_history"])
         elif action == "disable":
             await store.disable(msg.get("entity_id",""))
-        if action in ("remove","disable"):
+        if action in ("remove","disable","enable"):
             cache = hass.data[DOMAIN].get("address_cache",{})
             for key in list(cache):
                 if key[0] == msg.get("entity_id"):
@@ -143,7 +143,7 @@ async def ws_storage(hass, connection, msg):
             item = {"entity_id":entity,"name":state.name if state else entity,
                 "managed":entity in store.managed,"enabled":entity in store.devices,
                 "available":pos is not None,"recording_generation":store.generations.get(entity,0)}
-            if msg["include_position"] and entity in store.managed and entity in store.devices and pos is not None:
+            if msg["include_position"] and entity in store.managed and pos is not None:
                 item["position"] = {"latitude":pos[0],"longitude":pos[1],"accuracy":pos[2],
                     "updated_at":int(state.last_updated.timestamp()*1000)}
             devices.append(item)
@@ -307,20 +307,28 @@ async def ws_address(hass,connection,msg):
         runtime["pending"] -= 1
 
 async def resolve_address(hass, connection, msg, state, store, entity, runtime):
+    historical = "recorded_at" in msg
     def valid():
-        return connection_admin(connection) and state.get("store") is store and state.get("address_runtime") is runtime and store.active and store.ready and entity in store.managed and store.generations.get(entity,0)==initial_generation and ("recorded_at" in msg or entity in store.devices)
+        return connection_admin(connection) and state.get("store") is store and state.get("address_runtime") is runtime and store.active and store.ready and entity in store.managed and store.generations.get(entity,0)==initial_generation
+    def current_position_matches():
+        if historical:
+            return True
+        latest = position(hass.states.get(entity))
+        return bool(latest and (latest[1], latest[0]) == coords)
     # Resolve only existing authorized device positions, never arbitrary coordinates.
     async with store.lock:
         if not store.active or not store.ready or entity not in store.managed:
             connection.send_result(msg["id"],{"address":None})
             return
         initial_generation=store.generations.get(entity,0)
-        if "recorded_at" in msg:
+        # A live-only device has no consent row. Its address stays in memory.
+        persistent = historical or entity in store.devices
+        if historical:
             row=await store.run(lambda c:c.execute("SELECT longitude,latitude FROM locaris_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
             coords=tuple(row) if row else None
         else:
             current_state=hass.states.get(entity)
-            p=position(current_state) if entity in store.devices else None
+            p=position(current_state)
             if p and ("expected_updated_at" in msg or "expected_latitude" in msg or "expected_longitude" in msg):
                 if (msg.get("expected_updated_at")!=int(current_state.last_updated.timestamp()*1000) or msg.get("expected_latitude")!=p[0] or msg.get("expected_longitude")!=p[1]):
                     p=None
@@ -331,7 +339,7 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
     lon,lat=gcj(*coords)
     cache=runtime["cache"]
     lock=runtime["lock"]
-    key=(entity,round(lon,5),round(lat,5))
+    key=(entity,round(lon,5),round(lat,5)) if persistent else (entity,"live",lon,lat)
     async with lock:
         # Snapshot the recording generation; removal/pause/re-add during HTTP
         # must never resurrect an address after the device's history was deleted.
@@ -339,11 +347,18 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
             if not store.active or not store.ready or entity not in store.managed or store.generations.get(entity,0)!=initial_generation:
                 connection.send_result(msg["id"],{"address":None})
                 return
-            generation=await store.run(lambda c:c.execute("SELECT consent_at FROM locaris_devices WHERE entity_id=?",(entity,)).fetchone())
-            if not generation or ("recorded_at" not in msg and entity not in store.devices):
-                connection.send_result(msg["id"],{"address":None})
-                return
-            generation=generation[0]
+            generation=None
+            if persistent:
+                row=await store.run(lambda c:c.execute("SELECT consent_at FROM locaris_devices WHERE entity_id=?",(entity,)).fetchone())
+                if not row:
+                    connection.send_result(msg["id"],{"address":None})
+                    return
+                generation=row[0]
+            else:
+                # Only one current coordinate per live-only device; no trail.
+                for old_key in list(cache):
+                    if old_key[0]==entity and old_key!=key:
+                        cache.pop(old_key,None)
             if "recorded_at" in msg:
                 exists=await store.run(lambda c:c.execute("SELECT 1 FROM locaris_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
                 if not exists:
@@ -352,14 +367,17 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
             if not await current_admin(hass, connection) or not valid():
                 connection.send_result(msg["id"],{"address":None})
                 return
+            if not current_position_matches():
+                connection.send_result(msg["id"],{"address":None})
+                return
             now=now_ms()
             hit=cache.get(key)
-            if hit and now-hit[0]<(WINDOW if hit[1] else ADDRESS_FAILURE_TTL_MS):
+            if hit and now-hit[0]<((WINDOW if persistent else 30*60*1000) if hit[1] else ADDRESS_FAILURE_TTL_MS):
                 connection.send_result(msg["id"],{"address":hit[1]})
                 return
             if hit:
                 cache.pop(key,None)
-            hit=await store.run(store.cached_address,entity,lon,lat)
+            hit=await store.run(store.cached_address,entity,lon,lat) if persistent else None
             if not await current_admin(hass, connection) or not valid():
                 connection.send_result(msg["id"],{"address":None})
                 return
@@ -386,11 +404,9 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
             if not await current_admin(hass, connection) or not valid():
                 connection.send_result(msg["id"],{"address":None})
                 return
-            if "recorded_at" not in msg:
-                latest=position(hass.states.get(entity)) if entity in store.devices else None
-                if not latest or (latest[1],latest[0])!=coords:
-                    connection.send_result(msg["id"],{"address":None})
-                    return
+            if not current_position_matches():
+                connection.send_result(msg["id"],{"address":None})
+                return
             service_key=active["service_key"]
         runtime["last_request"]=time.monotonic()
         address=None
@@ -402,9 +418,10 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
         except Exception:
             pass
         async with store.lock:
-            current=await store.run(lambda c:c.execute("SELECT consent_at FROM locaris_devices WHERE entity_id=?",(entity,)).fetchone()) if store.active else None
-            if not await current_admin(hass, connection) or not valid() or not current or current[0]!=generation or store.generations.get(entity,0)!=initial_generation or not store.ready or entity not in store.managed or ("recorded_at" not in msg and entity not in store.devices):
-                address=None
+            current=await store.run(lambda c:c.execute("SELECT consent_at FROM locaris_devices WHERE entity_id=?",(entity,)).fetchone()) if persistent and store.active else None
+            if not await current_admin(hass, connection) or not valid() or not current_position_matches() or (persistent and (not current or current[0]!=generation)):
+                connection.send_result(msg["id"],{"address":None})
+                return
             if valid() and "recorded_at" in msg:
                 exists=await store.run(lambda c:c.execute("SELECT 1 FROM locaris_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
                 if not exists or not valid():
@@ -412,8 +429,9 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
                     return
             if isinstance(address,str) and address:
                 address=address[:1024]
-                await store.run(store.save_address,entity,lon,lat,address)
-                if not valid():
+                if persistent:
+                    await store.run(store.save_address,entity,lon,lat,address)
+                if not valid() or not current_position_matches():
                     address=None
                 else:
                     if len(cache)>=2048:
@@ -425,7 +443,7 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
                     cache.pop(next(iter(cache)))
                 cache[key]=(now_ms(),None)
         authorized = await current_admin(hass, connection)
-        connection.send_result(msg["id"],{"address":address if authorized and valid() and isinstance(address,str) else None})
+        connection.send_result(msg["id"],{"address":address if authorized and valid() and current_position_matches() and isinstance(address,str) else None})
 
 async def async_setup(hass, config):
     return True
@@ -455,7 +473,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.3-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.4-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("entry_id", None)
