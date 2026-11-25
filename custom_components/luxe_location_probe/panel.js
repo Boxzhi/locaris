@@ -1,4 +1,4 @@
-const VERSION='0.1.17-preview';
+const VERSION='0.1.18-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -25,7 +25,7 @@ const button=(text,fn,cls)=>{const b=el('button',text,cls);b.type='button';b.onc
 class LocationPanel extends HTMLElement{
   set hass(v){this._hass=v;if(this.isConnected&&this.viewportResize)this.syncHostLayout();if(this.isConnected&&!this.started)this.start();}
   connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
-  disconnectedCallback(){this.epoch++;this.started=false;clearInterval(this.timer);this.liveListObserver?.disconnect();this.liveListObserver=null;this.stopViewport();this.stopHistoryAddresses();this.destroyMap();}
+  disconnectedCallback(){this.epoch++;this.started=false;clearInterval(this.timer);this.liveListObserver?.disconnect();this.liveListObserver=null;this.stopViewport();this.closeHistoryCalendar();this.stopHistoryAddresses();this.destroyMap();}
   render(){
     this.innerHTML=`<style>
     html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--primary-background-color,#131820);overscroll-behavior:none}luxe-location-probe{display:block;height:100vh;height:var(--lx-viewport,100dvh);width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--lx-host-bg,var(--primary-background-color,#131820));-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
@@ -63,6 +63,7 @@ class LocationPanel extends HTMLElement{
     }
     @media(max-width:760px) and (max-height:700px){.lx-map-layout[data-mode=live]{grid-template-rows:minmax(0,1fr) minmax(0,min(var(--lx-live-list-natural,9999px),57.5%))}}
     @media(max-width:760px) and (min-height:850px){.lx-map-layout[data-mode=live]{grid-template-rows:minmax(0,1fr) minmax(0,min(var(--lx-live-list-natural,9999px),45%))}}
+    .lx-history-select-wrap{position:relative;min-width:0;color:var(--primary-text-color,#e7eaf0)}.lx-history-select-wrap .lx-history-select{appearance:none;-webkit-appearance:none;padding-right:30px;color:inherit;min-width:0;text-overflow:ellipsis}.lx-history-select-wrap>svg{position:absolute;right:9px;top:50%;transform:translateY(-50%);width:16px;height:16px;pointer-events:none;color:inherit}
     </style><div class="lx-shell"><header class="lx-head"><button id="menu" class="lx-menu" aria-label="打开侧边栏"></button><h1>位置中心</h1></header><nav class="lx-tabs" aria-label="位置中心页面"></nav><div class="lx-error" role="status"></div><main class="lx-content"></main></div>`;
     this.querySelector('#menu').append(icon('mdi:menu'));this.querySelector('#menu').onclick=()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true}));
     for(const [id,label,glyph] of TABS){const b=button(undefined,()=>this.switchPage(id));b.append(icon(glyph),el('span',label));b.dataset.page=id;this.querySelector('.lx-tabs').append(b);}
@@ -162,7 +163,12 @@ class LocationPanel extends HTMLElement{
     catch(e){if(this.isConnected&&epoch===this.epoch){this.status('操作失败：'+String(e.message||e));this.updateData();}}
     finally{this.busy=false;}
   }
+  closeHistoryCalendar(){
+    if(this.calendarOutside){document.removeEventListener('pointerdown',this.calendarOutside,true);this.calendarOutside=null;}
+    if(this.calendarDismiss){this.calendarDismiss();this.calendarDismiss=null;}
+  }
   switchPage(page){
+    this.closeHistoryCalendar();
     this.stopHistoryAddresses();this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveSelected=null;this.page=page;this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.destroyMap();
     for(const b of this.querySelectorAll('[data-page]'))b.setAttribute('aria-selected',String(b.dataset.page===page));
     const main=this.querySelector('.lx-content');main.replaceChildren();main.classList.toggle('lx-map-page',page==='live'||page==='history');
@@ -175,7 +181,7 @@ class LocationPanel extends HTMLElement{
   }
   updateData(){if(this.page==='live'){this.drawSide();this.syncMarkers();}else if(this.page==='history'){if(!this.querySelector('.lx-history-filter select')?.options.length)this.drawSide();}else this.drawData();}
   drawSide(){
-    const side=this.querySelector('.lx-side');if(!side)return;
+    const side=this.querySelector('.lx-side');if(!side)return;this.closeHistoryCalendar();
     const layout=this.querySelector('.lx-map-layout'),filter=layout.querySelector('.lx-history-filter'),old=filter?.querySelector('select')?.value,date=filter?.querySelector('[data-history-date]')?.value,scroll=side.querySelector('.lx-list-scroll')?.scrollTop||0;filter?.remove();side.replaceChildren();
     const data=this.data,devices=(data?.candidates||[]).filter(d=>d.managed);
     if(this.page==='live'){
@@ -206,19 +212,21 @@ class LocationPanel extends HTMLElement{
       requestAnimationFrame(measure);
     }else{
       const card=el('section',undefined,'lx-card lx-history-filter');card.append(el('h2','历史轨迹'));
-      const select=el('select',undefined,'lx-field');select.setAttribute('aria-label','选择设备');
+      const select=el('select',undefined,'lx-field lx-history-select');select.setAttribute('aria-label','选择设备');const selectWrap=el('div',undefined,'lx-history-select-wrap');const selectArrow=document.createElementNS('http://www.w3.org/2000/svg','svg');selectArrow.setAttribute('viewBox','0 0 24 24');selectArrow.setAttribute('aria-hidden','true');const arrowPath=document.createElementNS('http://www.w3.org/2000/svg','path');arrowPath.setAttribute('d','M7 9l5-5 5 5M7 15l5 5 5-5');arrowPath.setAttribute('fill','none');arrowPath.setAttribute('stroke','currentColor');arrowPath.setAttribute('stroke-width','2');arrowPath.setAttribute('stroke-linecap','round');arrowPath.setAttribute('stroke-linejoin','round');selectArrow.append(arrowPath);selectWrap.append(select,selectArrow);
       for(const d of devices){const opt=el('option',d.name);opt.value=d.entity_id;select.append(opt);}
       if(devices.some(d=>d.entity_id===old))select.value=old;
       const day=el('input');day.type='hidden';day.dataset.historyDate='1';
       const local=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
       const today=new Date(),min=new Date(today),yesterday=new Date(today);min.setDate(min.getDate()-29);yesterday.setDate(yesterday.getDate()-1);
       const maxDate=local(today),minDate=local(min);day.value=date&&date>=minDate&&date<=maxDate?date:maxDate;
-      const calendar=el('div',undefined,'lx-calendar-wrap'),trigger=button('',()=>{popup.hidden=!popup.hidden;trigger.setAttribute('aria-expanded',String(!popup.hidden));if(!popup.hidden){month=new Date(day.value+'T00:00:00');month.setDate(1);drawCalendar();}},'lx-field lx-date-trigger');
+      const calendar=el('div',undefined,'lx-calendar-wrap'),trigger=button('',()=>{if(!popup.hidden){dismiss();return;}popup.hidden=false;trigger.setAttribute('aria-expanded','true');month=new Date(day.value+'T00:00:00');month.setDate(1);drawCalendar();document.addEventListener('pointerdown',outside,true);this.calendarOutside=outside;},'lx-field lx-date-trigger');
       trigger.setAttribute('aria-label','选择日期');trigger.setAttribute('aria-expanded','false');
       const popup=el('div',undefined,'lx-calendar');popup.hidden=true;
+      const dismiss=()=>{popup.hidden=true;trigger.setAttribute('aria-expanded','false');document.removeEventListener('pointerdown',outside,true);if(this.calendarOutside===outside)this.calendarOutside=null;};
+      const outside=e=>{if(!(e.composedPath?.()||[]).includes(calendar)&&!calendar.contains(e.target))dismiss();};this.calendarDismiss=dismiss;
       let month=new Date(day.value+'T00:00:00');month.setDate(1);
       const updateLabel=()=>{trigger.replaceChildren(el('span','▦'),el('span',day.value+(day.value===maxDate?' · 今日':day.value===local(yesterday)?' · 昨日':'')),el('span','⌄','lx-date-arrow'));};
-      const choose=value=>{if(value<minDate||value>maxDate)return;day.value=value;popup.hidden=true;trigger.setAttribute('aria-expanded','false');updateLabel();this.loadHistory();};
+      const choose=value=>{if(value<minDate||value>maxDate)return;day.value=value;dismiss();updateLabel();this.loadHistory();};
       const drawCalendar=()=>{
         popup.replaceChildren();const header=el('div',undefined,'lx-cal-header');
         const prev=button('‹',()=>{month.setMonth(month.getMonth()-1);drawCalendar();}),next=button('›',()=>{month.setMonth(month.getMonth()+1);drawCalendar();});
@@ -237,11 +245,11 @@ class LocationPanel extends HTMLElement{
         }popup.append(grid);
         const footer=el('div',undefined,'lx-cal-header');footer.append(button('昨日',()=>choose(local(yesterday))),button('今日',()=>choose(maxDate)));popup.append(footer);
       };
-      calendar.append(trigger,day,popup);calendar.onkeydown=e=>{if(e.key==='Escape'){popup.hidden=true;trigger.setAttribute('aria-expanded','false');trigger.focus();}};
+      calendar.append(trigger,day,popup);calendar.onkeydown=e=>{if(e.key==='Escape'){dismiss();trigger.focus();}};
       updateLabel();
-      const wrap=el('div',undefined,'lx-stack');wrap.append(select,calendar);card.append(wrap);layout.prepend(card);
+      const wrap=el('div',undefined,'lx-stack');wrap.append(selectWrap,calendar);card.append(wrap);layout.prepend(card);
       const timeline=el('section',undefined,'lx-card');timeline.id='history-timeline';side.append(timeline);
-      select.onchange=()=>{popup.hidden=true;trigger.setAttribute('aria-expanded','false');this.loadHistory();};
+      select.onchange=()=>{dismiss();this.loadHistory();};
       this.loadHistory();
     }
   }
