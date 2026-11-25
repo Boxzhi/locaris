@@ -1,0 +1,26 @@
+name: Publish Locaris v0.2.12-preview
+on:
+  push:
+    branches: ['release/v0.2.12-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.12-preview >/dev/null 2>&1; then exit 0; fi
+          cat > /tmp/notes.md <<'EOF'
+          ## 日历选择器优化
+          - 移除底部今日、昨日快捷按钮及所在行。
+          - 顶部日期选择框始终显示 YYYY-MM-DD。
+          - 日历当天显示「今」，沿用原有字体、颜色及选中样式。
+          - 其他时间展示、月份切换、选择范围及历史查询逻辑保持不变。
+          - 新增日历回归测试，CI 全部通过；实际 HA 界面待验收。
+          EOF
+          gh release create v0.2.12-preview --target 1251214ec6e0ef519c8c5ba264f24bf4fcfe4382 --title "Locaris v0.2.12-preview" --notes-file /tmp/notes.md --prerelease --latest=false
