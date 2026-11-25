@@ -1,4 +1,4 @@
-const VERSION='0.2.10-preview';
+const VERSION='0.2.11-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,HISTORY_TODAY_MS:10000,HISTORY_PENDING_MS:5000,HISTORY_PAST_MS:60000,READ_TIMEOUT_MS:15000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:400,MAP_MEDIUM_MS:600,MAP_FAR_MS:800,MAP_LONG_MS:1000,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
@@ -74,7 +74,17 @@ function sdk(config){
 
 const TABS=[['live','实时位置','mdi:map-marker-radius-outline'],['history','历史轨迹','mdi:map-marker-path'],['devices','设备管理','mdi:cellphone'],['settings','设置','mdi:cog-outline']];
 const NS='locaris/';
-const fmt=t=>t?new Date(t).toLocaleString('zh-CN',{hour12:false}):'—';
+const pad2=n=>String(n).padStart(2,'0');
+function formatClock(d){return [d.getHours(),d.getMinutes(),d.getSeconds()].map(pad2).join(':');}
+function fmt(t,now=new Date(),unknown='—'){
+  if(t==null)return unknown;
+  const d=new Date(t);if(!Number.isFinite(d.getTime()))return unknown;
+  const yesterday=new Date(now);yesterday.setDate(yesterday.getDate()-1);
+  const time=formatClock(d),md=pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
+  if(d.toDateString()===now.toDateString())return time;
+  if(d.toDateString()===yesterday.toDateString())return '昨日 '+time;
+  return (d.getFullYear()===now.getFullYear()?md:d.getFullYear()+'-'+md)+' '+time;
+}
 const el=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
 const icon=name=>{const paths={'mdi:menu':'M4 6h16M4 12h16M4 18h16','mdi:map-marker-radius-outline':'M12 21s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z M12 6a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:map-marker-path':'M5 6a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M19 14a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M7 8h7a3 3 0 0 1 0 6H8a3 3 0 0 0 0 6h7','mdi:cellphone':'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z M10 18h4','mdi:cog-outline':'M10 2h4l.7 3 2 .9 2.7-1.6 2 3.5-2.3 2.1v2.2l2.3 2.1-2 3.5-2.7-1.6-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.6-2-3.5L5 12.1V9.9L2.7 7.8l2-3.5 2.7 1.6 2-.9z M12 8a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:dots-horizontal':'M5 12h.1M12 12h.1M19 12h.1','tablet':'M5 3h14v18H5z M10 18h4','layers':'M3 8l9-5 9 5-9 5z M3 12l9 5 9-5 M3 16l9 5 9-5','locate':'M12 2v4 M12 18v4 M2 12h4 M18 12h4 M12 6a6 6 0 1 0 0 12 6 6 0 1 0 0-12'};const ns='http://www.w3.org/2000/svg',e=document.createElementNS(ns,'svg'),p=document.createElementNS(ns,'path');e.setAttribute('viewBox','0 0 24 24');e.setAttribute('width','22');e.setAttribute('height','22');e.setAttribute('aria-hidden','true');p.setAttribute('d',paths[name]||paths['mdi:cellphone']);p.setAttribute('fill','none');p.setAttribute('stroke','currentColor');p.setAttribute('stroke-width',name==='mdi:dots-horizontal'?'4':'1.8');p.setAttribute('stroke-linecap','round');p.setAttribute('stroke-linejoin','round');e.append(p);return e;};
 const selectArrowIcon=()=>{const selectArrow=document.createElementNS('http://www.w3.org/2000/svg','svg');selectArrow.setAttribute('viewBox','0 0 24 24');selectArrow.setAttribute('aria-hidden','true');const arrowPath=document.createElementNS('http://www.w3.org/2000/svg','path');arrowPath.setAttribute('d','M7 9l5-5 5 5M7 15l5 5 5-5');arrowPath.setAttribute('fill','none');arrowPath.setAttribute('stroke','currentColor');arrowPath.setAttribute('stroke-width','2');arrowPath.setAttribute('stroke-linecap','round');arrowPath.setAttribute('stroke-linejoin','round');selectArrow.append(arrowPath);return selectArrow;};
@@ -704,9 +714,9 @@ class LocationPanel extends HTMLElement{
       const title=el('div',undefined,'lx-title'),count=el('span','','lx-muted');title.dataset.historyLegend='1';title.title=this.historyLegend();count.title='位置为连续位置分组，记录为数据库中实际存储的定位记录';title.append(el('h2','定位时间轴'),count);timeline.replaceChildren(title);
       if(!r.points.length&&this.historyReference){
         const p=this.historyReference,body=el('div',undefined,'lx-list-scroll'),card=el('div',undefined,'lx-point-card'),row=el('div',undefined,'lx-point-row'),info=el('span',undefined,'lx-point-label'),dot=el('span','·','lx-point-number');
-        count.textContent='0 个位置 · 0 条记录';count.title='参考位置不计入当日记录';
+        count.remove();
         const address=el('span','地址待加载','lx-group-address');address._lxRecordedAt=p.recorded_at;
-        info.append(address,el('span','最后记录：'+fmt(p.recorded_at),'lx-muted lx-group-count'),el('span','当日无定位变化记录，仅供参考','lx-muted lx-group-count'));
+        info.append(address,el('span','最后记录：'+fmt(p.recorded_at),'lx-muted lx-group-count'));
         row.append(dot,info);card.append(row);body.append(card);timeline.append(body);
         this.historyRegroup=(at,value)=>{if(seq===this.historySeq&&at===p.recorded_at&&address.isConnected)address.textContent=value;};
         this.watchHistoryAddresses(entity,seq)(address);this.updateHistorySync(timeline);
@@ -714,11 +724,11 @@ class LocationPanel extends HTMLElement{
       }
       let shown=0,expanded=null,groups=this.historyGroups(r.points),limit=oldLimit||50,rendering=false;
       const selectedGroup=groups.findIndex(g=>g.includes(this.selectedHistoryIndex)),anchorIndex=anchorTime==null?-1:r.points.findIndex(p=>p.recorded_at===anchorTime),anchorGroup=groups.findIndex(g=>g.includes(anchorIndex));const requiredGroup=Math.max(selectedGroup,anchorGroup);if(requiredGroup>=limit)limit=Math.ceil((requiredGroup+1)/50)*50;this.historyLimit=limit;
-      const updateCount=()=>{count.textContent=groups.length+' 个位置 · '+r.points.length+' 条记录'+(r.truncated?' · 已截断':'');};updateCount();
+      const updateCount=()=>{if(!r.points.length){count.remove();return;}count.textContent=groups.length+' 个位置 · '+r.points.length+' 条记录'+(r.truncated?' · 已截断':'');};updateCount();
       const coordByTime=new Map(),timesByCoord=new Map();for(const p of r.points){const key=p.latitude+','+p.longitude;coordByTime.set(p.recorded_at,key);if(!timesByCoord.has(key))timesByCoord.set(key,[]);timesByCoord.get(key).push(p.recorded_at);}
       const watchAddress=this.watchHistoryAddresses(entity,seq);
       const body=el('div',undefined,'lx-list-scroll');timeline.append(body);this.updateHistorySync(timeline);
-      const timeOnly=t=>new Date(t).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      const timeOnly=t=>formatClock(new Date(t));
       const close=(restore=false)=>{if(!expanded)return;expanded.row.setAttribute('aria-expanded','false');expanded.card.classList.remove('lx-point-open');expanded.arrow.textContent='⌄';this.animatePoint(expanded.detail,false);expanded=null;if(restore){this.selectHistoryMarker(null);this.fitHistory();}};
       this.closeHistoryPoint=()=>close(false);
       const more=button('显示更多',()=>{limit+=50;this.historyLimit=limit;render(true);});
@@ -844,13 +854,7 @@ class LocationPanel extends HTMLElement{
     this.selectHistoryMarker(this.selectedHistoryIndex??null);
     if(adjustView){if(this.selectedHistoryIndex==null)this.fitHistory();else if(xy[this.selectedHistoryIndex])map.setZoomAndCenter(17,xy[this.selectedHistoryIndex]);}
   }
-  liveTime(t){
-    if(t==null)return '定位时间未知';const d=new Date(t),now=new Date(),y=new Date(now);y.setDate(y.getDate()-1);
-    const time=d.toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    const md=String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    const prefix=d.toDateString()===now.toDateString()?'':d.toDateString()===y.toDateString()?'昨日 ':d.getFullYear()===now.getFullYear()?md+' ':d.getFullYear()+'-'+md+' ';
-    return prefix+time;
-  }
+  liveTime(t){return fmt(t,new Date(),'定位时间未知');}
   retryLiveAddresses(){
     for(const row of this.querySelectorAll('.lx-live-row[data-focus]')){
       const node=row.querySelector('.lx-live-address');

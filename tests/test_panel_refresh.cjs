@@ -74,3 +74,30 @@ test('removed devices section appears only for nonzero count and preserves open 
   panel.drawData();
   assert.equal(main.querySelector('[data-excluded]'),null);
 });
+
+
+test('shared timestamp formats today, yesterday, earlier date and previous year',()=>{
+  const context={};vm.createContext(context);
+  const start=source.indexOf('const pad2='),end=source.indexOf('const el=',start);
+  vm.runInContext(source.slice(start,end)+'\nthis.format=fmt;this.clock=formatClock;',context);
+  const fmt=context.format;
+  const now=new Date(2026,10,25,18,2,0);
+  assert.equal(fmt(new Date(2026,10,25,0,3,4),now),'00:03:04');
+  assert.equal(fmt(new Date(2026,10,24,21,3,44),now),'昨日 21:03:44');
+  assert.equal(fmt(new Date(2026,10,23,9,3,4),now),'11-23 09:03:04');
+  assert.equal(fmt(new Date(2025,10,24,21,3,44),now),'2025-11-24 21:03:44');
+  assert.equal(fmt(new Date(2026,11,31,23,59,59),new Date(2027,0,1,12)),'昨日 23:59:59');
+  assert.equal(fmt(null,now,'定位时间未知'),'定位时间未知');
+  assert.equal(fmt(NaN,now),'—');
+  assert.equal(context.clock(new Date(2026,10,25,0,0,0)),'00:00:00');
+});
+test('empty history reference hides count and redundant explanation, retains timestamp',()=>{
+  const start=source.indexOf('if(!r.points.length&&this.historyReference){');
+  const end=source.indexOf('let shown=0',start);
+  const branch=source.slice(start,end);
+  assert.match(branch,/count\.remove\(\)/);
+  assert.match(branch,/'最后记录：'\+fmt\(p.recorded_at\)/);
+  assert.doesNotMatch(branch,/当日无定位变化记录|0 个位置 · 0 条记录/);
+  assert.match(source,/if\(!r.points.length\)\{count.remove\(\);return;\}/);
+  assert.match(source,/liveTime\(t\)\{return fmt\(t,new Date\(\),'定位时间未知'\);\}/);
+});
