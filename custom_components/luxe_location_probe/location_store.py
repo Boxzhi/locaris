@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import time
 
+from .history_logic import recorder_changes
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
@@ -324,25 +325,30 @@ class Store:
             # Query with one millisecond of overlap at strict Recorder boundaries.
             # The explicit half-open filter below prevents synthetic or future rows.
             # Carry the last valid payload across windows, not across consent changes.
+            # A persisted predecessor is a fallback if Recorder cannot provide
+            # its start state (for example after a database outage).
             previous = None
+            async with self.lock:
+                if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
+                    return
+                baseline = await self.run(lambda c: c.execute(
+                    "SELECT latitude,longitude,accuracy FROM probe_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at DESC LIMIT 1",
+                    (entity, earliest, start)).fetchone())
+                if baseline is not None:
+                    previous = tuple(baseline)
             while start < end and self.active and self.generations.get(entity, 0) == generation:
                 stop = min(start + 86400000, end)
                 begin_dt = datetime.fromtimestamp((start - 1) / 1000, timezone.utc)
                 end_dt = datetime.fromtimestamp(stop / 1000, timezone.utc)
                 def read():
                     result = history.get_significant_states(self.hass, begin_dt, end_dt, [entity],
-                        include_start_time_state=False, significant_changes_only=False,
+                        include_start_time_state=start > earliest, significant_changes_only=False,
                         minimal_response=False, no_attributes=False)
-                    rows = []
-                    prev = previous
-                    for state in result.get(entity, []):
-                        p = point(state)
-                        if p is None or not start <= p[0] < stop:
-                            continue
-                        if prev is None or p[1:] != prev:
-                            rows.append(p)
-                        prev = p[1:]
-                    return rows, prev
+                    # A synthetic start state is stamped at begin_dt (start-1).
+                    # It is comparison context only, never a new stored sample.
+                    # Do not seed from before the current recording permission.
+                    return recorder_changes(result.get(entity, []), start, stop,
+                                            previous, earliest, point)
                 rows, previous = await get_instance(self.hass).async_add_executor_job(read)
                 async with self.lock:
                     if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
