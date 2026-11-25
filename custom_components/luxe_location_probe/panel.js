@@ -1,4 +1,4 @@
-const VERSION='0.1.43-preview';
+const VERSION='0.1.44-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -30,8 +30,12 @@ const button=(text,fn,cls)=>{const b=el('button',text,cls);b.type='button';b.onc
 class LocationPanel extends HTMLElement{
   set hass(v){
     const old=this._hass;this._hass=v;
+    if(this.isConnected&&old?.user?.is_admin&&!v?.user?.is_admin){this.disconnectedCallback();this.accessRevoked=true;this.replaceChildren();return;}
+    if(this.isConnected&&this.accessRevoked){if(v?.user?.is_admin){this.accessRevoked=false;this.connectedCallback();}return;}
     if(this.isConnected&&this.viewportResize&&(old?.themes!==v?.themes||old?.user!==v?.user))this.syncHostLayout();
     if(this.isConnected&&!this.started)this.start();
+    if(this.started&&v?.connected===false){this.pendingActions=[];this.status('HA 连接已断开');return;}
+    if(this.started&&old?.connected===false&&v?.connected!==false&&!document.hidden){this.status();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'&&!this.historyData)this.loadHistory();}
     if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&d.enabled&&(old.states[d.entity_id]?.last_updated!==v.states[d.entity_id]?.last_updated||old.states[d.entity_id]?.state!==v.states[d.entity_id]?.state)))this.liveDirty=true;
   }
   connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
@@ -180,7 +184,7 @@ class LocationPanel extends HTMLElement{
     }
   }
   refreshMapSession(){
-    if(!sdkSession||Date.now()<(this.mapRenewRetryAt||0)||(this.page!=='live'&&this.page!=='history'))return;
+    if(this._hass?.connected===false||!sdkSession||Date.now()<(this.mapRenewRetryAt||0)||(this.page!=='live'&&this.page!=='history'))return;
     const epoch=this.epoch,target=this.querySelector('.lx-map-inner'),map=this.map;
     if(!target||!map||this.mapRenewPending)return;
     const token={};this.mapRenewPending=token;
@@ -188,7 +192,7 @@ class LocationPanel extends HTMLElement{
     ensureSdkConfig(this._hass).then(()=>{if(current()&&this.mapSessionError){this.mapSessionError=false;this.mapStatus(target);}}).catch(()=>{if(current()){this.mapRenewRetryAt=Date.now()+60000;this.mapSessionError=true;this.mapStatus(target,'地图会话暂不可用',()=>this.retryMap(target));}}).finally(()=>{if(this.mapRenewPending===token)this.mapRenewPending=null;});
   }
   refreshTick(now=Date.now()){
-    if(document.hidden||!this.isConnected||!this.started)return;
+    if(document.hidden||!this.isConnected||!this.started||this._hass?.connected===false)return;
     const interval=this.page==='live'?15000:this.page==='devices'?30000:60000;
     const elapsed=now-this.lastRefreshAt;
     if(!this.refreshToken&&(elapsed>=interval||(this.page==='live'&&this.liveDirty&&elapsed>=5000)))this.refresh();
@@ -198,7 +202,7 @@ class LocationPanel extends HTMLElement{
   stateView(message,retry){const node=el('div',undefined,'lx-state lx-muted');node.setAttribute('role','status');node.append(el('span',message));if(retry)node.append(button('重试',retry));return node;}
   mapStatus(target,message='',retry){const node=target.parentElement?.querySelector('.lx-map-state');if(!node)return;node.replaceChildren();node.hidden=!message;if(message){node.append(el('span',message));if(retry)node.append(button('重试',retry));}}
   refresh(action='list',entity_id,delete_history=false){
-    if(!this.isConnected||!this._hass?.user?.is_admin)return;
+    if(!this.isConnected||!this._hass?.user?.is_admin||this._hass.connected===false)return;
     if(action==='list'){
       if(this.refreshToken)return;
       this.refreshNeeded=true;
@@ -210,14 +214,14 @@ class LocationPanel extends HTMLElement{
     this.drainRefresh();
   }
   async drainRefresh(){
-    if(this.refreshToken||!this.isConnected||!this._hass?.user?.is_admin)return;
+    if(this.refreshToken||!this.isConnected||!this._hass?.user?.is_admin||this._hass.connected===false)return;
     const job=this.pendingActions.shift()||(this.refreshNeeded?{action:'list'}:null);
     if(!job)return;
     this.refreshNeeded=false;
     const epoch=this.epoch,token={key:job.key},live=this.page==='live',settings=this.page==='settings';
     this.refreshToken=token;this.lastRefreshAt=Date.now();if(live)this.liveDirty=false;
     const current=()=>this.isConnected&&this.epoch===epoch&&this.refreshToken===token;
-    const active=()=>current()&&this._hass?.user?.is_admin;
+    const active=()=>current()&&this._hass?.user?.is_admin&&this._hass.connected!==false;
     try{
       const r=await this._hass.callWS({type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live,include_storage:settings});
       if(!active())return;
@@ -416,10 +420,10 @@ class LocationPanel extends HTMLElement{
     return target=>{if(generation!==this.historyAddressGeneration||seq!==this.historySeq)return;if(this.historyAddressObserver)this.historyAddressObserver.observe(target);else enqueue(target);};
   }
   async drainHistoryAddresses(){
-    if(this.historyAddressBusy||document.hidden)return;
+    if(this.historyAddressBusy||document.hidden||this._hass?.connected===false)return;
     this.historyAddressBusy=true;
     try{
-      while(this.historyAddressQueue?.length&&!document.hidden){
+      while(this.historyAddressQueue?.length&&!document.hidden&&this._hass?.connected!==false){
         const item=this.historyAddressQueue.shift();
         if(item.generation!==this.historyAddressGeneration||item.seq!==this.historySeq||this.page!=='history'||!item.target.isConnected)continue;
         if(!this._hass?.user?.is_admin)break;
@@ -503,7 +507,7 @@ class LocationPanel extends HTMLElement{
   }
   async loadHistory(){
     const select=this.querySelector('.lx-history-filter select'),day=this.querySelector('[data-history-date]'),timeline=this.querySelector('#history-timeline');
-    if(!select||!day||!timeline)return;
+    if(!select||!day||!timeline||!this._hass?.user?.is_admin||this._hass.connected===false)return;
     this.stopHistoryAddresses();this.historyResolved=new Map();this.historyFailed=new Set();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyFlags=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.paintHistory();
     timeline.replaceChildren(el('h2','定位时间轴'));
     if(!select.value||!day.value){timeline.append(this.stateView(this.data?'暂无可查询设备':this.dataError||'正在读取设备…'));return;}

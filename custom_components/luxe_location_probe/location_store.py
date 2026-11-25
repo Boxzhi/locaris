@@ -49,6 +49,7 @@ class Store:
         self.excluded = set()
         self.discovery = None
         self.importing = {}
+        self.retry_import = {}
         self.generations = {}
         self.last_valid = {}
         self.initialized = False
@@ -173,7 +174,15 @@ class Store:
                 self.managed.update(new)
 
     async def scan_tick(self, _now):
-        await self.discover()
+        try:
+            await self.discover()
+        except (sqlite3.Error, OSError):
+            _LOGGER.warning("Location discovery deferred (no coordinates logged)")
+        if self.active and self.ready:
+            for entity, deadline in list(self.retry_import.items()):
+                if time.monotonic() >= deadline:
+                    self.retry_import.pop(entity, None)
+                    self.schedule_backfill(entity)
 
     async def add(self, entity):
         state = self.hass.states.get(entity)
@@ -211,6 +220,7 @@ class Store:
     def invalidate(self, entity):
         self.generations[entity] = self.generations.get(entity, 0) + 1
         self.last_valid.pop(entity, None)
+        self.retry_import.pop(entity, None)
 
     @callback
     def schedule_backfill(self, entity):
@@ -219,6 +229,7 @@ class Store:
         generation = self.generations.get(entity, 0)
         if self.importing.get(entity) == generation:
             return
+        self.retry_import.pop(entity, None)
         self.importing[entity] = generation
         self.spawn(self.backfill(entity, generation))
 
@@ -327,6 +338,15 @@ class Store:
             self.listen()
             await self.checkpoint_safely()
 
+    @staticmethod
+    def recorder_available(recorder):
+        ready = getattr(recorder, "async_db_ready", None)
+        return bool(ready is not None and ready.done() and not ready.cancelled() and ready.result() and getattr(recorder, "recording", True) and getattr(recorder, "enabled", True))
+
+    def defer_backfill(self, entity, generation):
+        if self.active and entity in self.devices and self.generations.get(entity, 0) == generation:
+            self.retry_import[entity] = time.monotonic() + 300
+
     async def backfill(self, entity, generation):
         try:
             from homeassistant.components.recorder import get_instance, history
@@ -337,7 +357,13 @@ class Store:
             if row is None:
                 return
             consent, earliest, cursor = row
-            end = now_ms() - 120000
+            recorder = get_instance(self.hass)
+            if not self.recorder_available(recorder):
+                self.defer_backfill(entity, generation)
+                return
+            # Respect long Recorder commit intervals before advancing the cursor.
+            delay = max(120000, int(getattr(recorder, "commit_interval", 5)*2000+30000))
+            end = now_ms() - delay
             start = max(earliest, cursor - 300000, now_ms() - WINDOW)
             # Query with one millisecond of overlap at strict Recorder boundaries.
             # The explicit half-open filter below prevents synthetic or future rows.
@@ -368,18 +394,28 @@ class Store:
                     # Do not seed from before the current recording permission.
                     return recorder_changes(result.get(entity, []), start, stop,
                                             previous, earliest, point)
-                rows, previous = await get_instance(self.hass).async_add_executor_job(read)
+                if not self.recorder_available(recorder):
+                    self.defer_backfill(entity, generation)
+                    return
+                rows, previous = await recorder.async_add_executor_job(read)
+                if not self.recorder_available(recorder):
+                    self.defer_backfill(entity, generation)
+                    return
                 async with self.lock:
                     if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
                         return
                     current = await self.run(lambda c: c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?", (entity,)).fetchone())
-                    if current is None or current[0] != consent:
+                    if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation or current is None or current[0] != consent:
+                        return
+                    if not self.recorder_available(recorder):
+                        self.defer_backfill(entity, generation)
                         return
                     await self.run(self.insert, entity, rows, "recorder", stop)
                 start = stop
         except asyncio.CancelledError:
             raise
         except Exception:
+            self.defer_backfill(entity, generation)
             _LOGGER.warning("Location probe Recorder import failed (no coordinates logged)")
         finally:
             if self.importing.get(entity) == generation:
@@ -495,4 +531,5 @@ class Store:
                     await self.checkpoint_safely()
                     self.initialized = False
             self.importing.clear()
+            self.retry_import.clear()
             self.last_valid.clear()
