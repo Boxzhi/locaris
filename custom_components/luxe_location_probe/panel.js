@@ -1,4 +1,4 @@
-const VERSION='0.1.42-preview';
+const VERSION='0.1.43-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -35,7 +35,7 @@ class LocationPanel extends HTMLElement{
     if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&d.enabled&&(old.states[d.entity_id]?.last_updated!==v.states[d.entity_id]?.last_updated||old.states[d.entity_id]?.state!==v.states[d.entity_id]?.state)))this.liveDirty=true;
   }
   connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
-  disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.data=null;this.liveAddressCache?.clear();clearInterval(this.timer);this.timer=null;if(this.visibilityHandler){document.removeEventListener('visibilitychange',this.visibilityHandler);this.visibilityHandler=null;}this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveListView=null;this.stopViewport();this.closeHistoryCalendar();this.stopMenus();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
+  disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.data=null;this.liveAddressCache?.clear();this.dataError='';clearInterval(this.timer);this.timer=null;if(this.visibilityHandler){document.removeEventListener('visibilitychange',this.visibilityHandler);this.visibilityHandler=null;}this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveListView=null;this.stopViewport();this.closeHistoryCalendar();this.stopMenus();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
   render(){
     this.innerHTML=`<style>
     html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--primary-background-color,#131820);overscroll-behavior:none}luxe-location-probe{display:block;height:100vh;height:var(--lx-viewport,100dvh);width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--lx-host-bg,var(--primary-background-color,#131820));-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
@@ -401,7 +401,7 @@ class LocationPanel extends HTMLElement{
   watchHistoryAddresses(entity,seq){
     const generation=this.historyAddressGeneration;
     const enqueue=target=>{
-      if(target._lxQueued||!target.isConnected)return;
+      if(generation!==this.historyAddressGeneration||seq!==this.historySeq||this.page!=='history'||target._lxQueued||!target.isConnected)return;
       target._lxQueued=true;
       this.historyAddressQueue.push({entity,at:target._lxRecordedAt,target,seq,generation});
       this.drainHistoryAddresses();
@@ -413,7 +413,7 @@ class LocationPanel extends HTMLElement{
         }
       },{root:null,rootMargin:'60px 0px'});
     }
-    return target=>{if(this.historyAddressObserver)this.historyAddressObserver.observe(target);else enqueue(target);};
+    return target=>{if(generation!==this.historyAddressGeneration||seq!==this.historySeq)return;if(this.historyAddressObserver)this.historyAddressObserver.observe(target);else enqueue(target);};
   }
   async drainHistoryAddresses(){
     if(this.historyAddressBusy||document.hidden)return;

@@ -88,7 +88,7 @@ async def ws_storage(hass, connection, msg):
         # Discovery is already scheduled every minute by Store.
         if action != "list":
             await store.discover()
-        if not connection_admin(connection) or not store.active or not store.ready:
+        if not await current_admin(hass, connection) or not store.active or not store.ready:
             connection.send_error(msg["id"], "not_loaded", "Storage not ready")
             return
         if action == "add":
@@ -105,7 +105,7 @@ async def ws_storage(hass, connection, msg):
                 if key[0] == msg.get("entity_id"):
                     cache.pop(key,None)
         stats = await store.storage_stats() if msg["include_storage"] else None
-        if not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store:
+        if not await current_admin(hass, connection) or not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store:
             connection.send_error(msg["id"], "not_loaded", "Storage not ready")
             return
         if not connection_admin(connection):
@@ -163,7 +163,7 @@ async def ws_history(hass, connection, msg):
             _LOGGER.warning("Location history query failed (no coordinates logged)")
             connection.send_error(msg["id"], "history_failed", "History query failed")
             return
-    if not connection_admin(connection) or not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store or entity not in store.managed or store.generations.get(entity, 0) != generation:
+    if not await current_admin(hass, connection) or not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store or entity not in store.managed or store.generations.get(entity, 0) != generation:
         connection.send_error(msg["id"], "not_loaded", "Storage not ready")
         return
     connection.send_result(msg["id"], {"points":rows,"truncated":truncated,"collapsed":hidden})
@@ -262,6 +262,19 @@ async def ws_address(hass,connection,msg):
     if not runtime:
         connection.send_result(msg["id"],{"address":None})
         return
+    if runtime["pending"] >= 32:
+        connection.send_error(msg["id"], "busy", "Address queue busy")
+        return
+    runtime["pending"] += 1
+    try:
+        await resolve_address(hass, connection, msg, state, store, entity, runtime)
+    except Exception:
+        _LOGGER.warning("Location address operation failed (no coordinates logged)")
+        connection.send_error(msg["id"], "address_failed", "Address operation failed")
+    finally:
+        runtime["pending"] -= 1
+
+async def resolve_address(hass, connection, msg, state, store, entity, runtime):
     def valid():
         return connection_admin(connection) and state.get("store") is store and state.get("address_runtime") is runtime and store.active and store.ready and entity in store.managed and store.generations.get(entity,0)==initial_generation and ("recorded_at" in msg or entity in store.devices)
     # Resolve only existing authorized device positions, never arbitrary coordinates.
@@ -304,7 +317,7 @@ async def ws_address(hass,connection,msg):
                 if not exists:
                     connection.send_result(msg["id"],{"address":None})
                     return
-            if not valid():
+            if not await current_admin(hass, connection) or not valid():
                 connection.send_result(msg["id"],{"address":None})
                 return
             now=now_ms()
@@ -315,7 +328,7 @@ async def ws_address(hass,connection,msg):
             if hit:
                 cache.pop(key,None)
             hit=await store.run(store.cached_address,entity,lon,lat)
-            if not valid():
+            if not await current_admin(hass, connection) or not valid():
                 connection.send_result(msg["id"],{"address":None})
                 return
             if hit:
@@ -343,7 +356,7 @@ async def ws_address(hass,connection,msg):
                 if not latest or (latest[1],latest[0])!=coords:
                     connection.send_result(msg["id"],{"address":None})
                     return
-            if not valid():
+            if not await current_admin(hass, connection) or not valid():
                 connection.send_result(msg["id"],{"address":None})
                 return
             service_key=active["service_key"]
@@ -358,7 +371,7 @@ async def ws_address(hass,connection,msg):
             pass
         async with store.lock:
             current=await store.run(lambda c:c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?",(entity,)).fetchone()) if store.active else None
-            if not valid() or not current or current[0]!=generation or store.generations.get(entity,0)!=initial_generation or not store.ready or entity not in store.managed or ("recorded_at" not in msg and entity not in store.devices):
+            if not await current_admin(hass, connection) or not valid() or not current or current[0]!=generation or store.generations.get(entity,0)!=initial_generation or not store.ready or entity not in store.managed or ("recorded_at" not in msg and entity not in store.devices):
                 address=None
             if valid() and "recorded_at" in msg:
                 exists=await store.run(lambda c:c.execute("SELECT 1 FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
@@ -379,7 +392,8 @@ async def ws_address(hass,connection,msg):
                 if len(cache)>=2048 and key not in cache:
                     cache.pop(next(iter(cache)))
                 cache[key]=(now_ms(),None)
-        connection.send_result(msg["id"],{"address":address if valid() and isinstance(address,str) else None})
+        authorized = await current_admin(hass, connection)
+        connection.send_result(msg["id"],{"address":address if authorized and valid() and isinstance(address,str) else None})
 
 async def async_setup(hass, config):
     return True
@@ -406,9 +420,9 @@ async def async_setup_entry(hass, entry):
         state["active"] = dict(entry.data)
         state["proxy_sessions"] = {}
         state["proxy_runtime"] = {"times":[],"inflight":0}
-        state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
+        state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.42-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.43-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)
@@ -431,7 +445,10 @@ async def async_unload_entry(hass, entry):
     if store:
         store.active = False
         store.ready = False
-    frontend.async_remove_panel(hass, PANEL)
+    try:
+        frontend.async_remove_panel(hass, PANEL)
+    except Exception:
+        _LOGGER.warning("Location panel removal failed")
     hass.data[DOMAIN].pop("active",None)
     hass.data[DOMAIN].pop("proxy_sessions",None)
     hass.data[DOMAIN].pop("proxy_runtime",None)

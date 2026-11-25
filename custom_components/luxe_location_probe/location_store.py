@@ -231,8 +231,14 @@ class Store:
     @callback
     def listen(self):
         if self.unsub:
-            self.unsub()
-            self.unsub = None
+            unsubscribe, self.unsub = self.unsub, None
+            try:
+                unsubscribe()
+            except Exception:
+                # Do not register a second listener if the previous one may remain.
+                self.unsub = unsubscribe
+                _LOGGER.warning("Location listener replacement deferred")
+                return
         if self.active and self.devices:
             for entity in self.devices:
                 p = position(self.hass.states.get(entity))
