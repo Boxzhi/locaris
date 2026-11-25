@@ -1,5 +1,5 @@
 """Validate global runtime settings and keep independent monotonic deadlines."""
-from .const import DISCOVERY_INTERVAL_S, BACKFILL_INTERVAL_S, CLEANUP_INTERVAL_S
+from .const import DISCOVERY_INTERVAL_S, BACKFILL_INTERVAL_S, CLEANUP_INTERVAL_S, CLEANUP_RETRY_S
 
 DEFAULT_POLICY = {
     "discovery_minutes": DISCOVERY_INTERVAL_S // 60,
@@ -34,6 +34,9 @@ class Schedule:
             self.next_discovery = now + new["discovery_minutes"] * 60
         if old["backfill_minutes"] != new["backfill_minutes"]:
             self.next_backfill = now + new["backfill_minutes"] * 60
+
+    def defer_cleanup(self, now):
+        self.next_cleanup = min(self.next_cleanup, now + CLEANUP_RETRY_S)
 
     def due(self, policy, now):
         discovery = now >= self.next_discovery

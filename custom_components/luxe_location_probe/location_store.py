@@ -271,6 +271,8 @@ class Store:
         try:
             await self.cleanup()
         except (sqlite3.Error, OSError):
+            if self.active and self.schedule:
+                self.schedule.defer_cleanup(time.monotonic())
             self.warn("Location periodic cleanup failed (no coordinates logged)")
 
     @callback

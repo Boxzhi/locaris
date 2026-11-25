@@ -135,7 +135,10 @@ async def ws_storage(hass, connection, msg):
     except PermissionError:
         connection.send_error(msg["id"], "unauthorized", "Administrator required")
     except ValueError:
-        connection.send_error(msg["id"], "invalid_request", "Invalid device or runtime policy")
+        if msg["action"] == "policy" or "policy" in msg:
+            connection.send_error(msg["id"], "invalid_request", "Invalid runtime policy")
+        else:
+            connection.send_error(msg["id"], "invalid_device", "Invalid GPS device")
     except Exception:
         store.warn("Location storage operation failed (no coordinates logged)")
         connection.send_error(msg["id"], "storage_failed", "Storage operation failed")
@@ -433,7 +436,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.49-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.49.1-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)

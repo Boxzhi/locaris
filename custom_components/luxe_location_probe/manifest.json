@@ -1,7 +1,7 @@
 {
   "domain": "luxe_location_probe",
   "name": "LUXE Location",
-  "version": "0.1.49-preview",
+  "version": "0.1.49.1-preview",
   "config_flow": true,
   "dependencies": [
     "frontend",
