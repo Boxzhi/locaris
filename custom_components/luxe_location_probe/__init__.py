@@ -2,6 +2,7 @@ from pathlib import Path
 import asyncio
 import math
 import logging
+import json
 import secrets
 import time
 from aiohttp import web
@@ -44,7 +45,10 @@ async def ws_config(hass, connection, msg):
         connection.send_error(msg["id"], "not_loaded", "Probe not loaded")
         return
     state = hass.data[DOMAIN]
-    sessions = state.setdefault("proxy_sessions", {})
+    sessions = state.get("proxy_sessions")
+    if sessions is None:
+        connection.send_error(msg["id"], "not_loaded", "Probe not loaded")
+        return
     now = time.monotonic()
     renew=msg.get("renew_path","")
     if renew:
@@ -205,25 +209,36 @@ class MapProxy(HomeAssistantView):
             raise web.HTTPForbidden()
         if len(request.query_string)>8192:
             raise web.HTTPBadRequest()
-        times = session["times"]
-        times[:] = [t for t in times if now-t<60]
-        if len(times)>=120:
-            raise web.HTTPTooManyRequests()
-        times.append(now)
+        runtime = state.get("proxy_runtime")
+        if runtime is None:
+            raise web.HTTPUnauthorized()
         params = [(k,v) for k,v in request.query.items() if k.lower() not in ("key","jscode")]
         params.extend([("key",data["map_key"]),("jscode",data["security_code"])])
+        if not security.reserve_proxy(runtime, session, time.monotonic()):
+            raise web.HTTPTooManyRequests(headers={"Retry-After":"5"})
         try:
             async with async_get_clientsession(hass).get(target,params=params,allow_redirects=False,timeout=15) as resp:
                 if resp.status!=200:
                     return web.Response(status=502)
-                body=bytearray()
-                async for chunk in resp.content.iter_chunked(65536):
-                    body.extend(chunk)
-                    if len(body)>4*1024*1024:
-                        return web.Response(status=502)
-                return web.Response(body=bytes(body),content_type=resp.content_type,headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer"})
+                content_type = resp.content_type
+                if content_type not in ("application/json","application/javascript","text/javascript","application/x-javascript","text/plain","application/octet-stream"):
+                    return web.Response(status=502)
+                body = await security.read_limited(resp.content, 4*1024*1024)
+                # Never forward a response reflecting the server-side security code.
+                if data["security_code"] and data["security_code"].encode() in body:
+                    return web.Response(status=502)
+                user = await hass.auth.async_get_user(session["user"])
+                if not user or not user.is_admin or not user.is_active:
+                    raise web.HTTPForbidden()
+                if state.get("active") is not data or state.get("proxy_runtime") is not runtime or state.get("proxy_sessions",{}).get(token) is not session or session["expires"] <= time.monotonic():
+                    raise web.HTTPUnauthorized()
+                return web.Response(body=body,content_type=content_type,headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer","X-Content-Type-Options":"nosniff"})
+        except web.HTTPException:
+            raise
         except Exception:
             return web.Response(status=502)
+        finally:
+            runtime["inflight"] -= 1
 
 @websocket_api.websocket_command({vol.Required("type"): DOMAIN+"/address",vol.Required("entity_id"):checked(security.entity_id),vol.Optional("recorded_at"):checked(security.timestamp),vol.Optional("expected_updated_at"):checked(security.timestamp),vol.Optional("expected_latitude"):checked(lambda v: security.coordinate(v,90)),vol.Optional("expected_longitude"):checked(lambda v: security.coordinate(v,180))})
 @websocket_api.require_admin
@@ -336,8 +351,8 @@ async def ws_address(hass,connection,msg):
         address=None
         try:
             async with async_get_clientsession(hass).get("https://restapi.amap.com/v3/geocode/regeo",params={"key":service_key,"location":f"{lon:.6f},{lat:.6f}","extensions":"base"},timeout=10,allow_redirects=False) as resp:
-                result=await resp.json(content_type=None)
-                if result.get("status")=="1":
+                result=json.loads(await security.read_limited(resp.content, 65536)) if resp.status==200 else {}
+                if isinstance(result,dict) and result.get("status")=="1":
                     address=result.get("regeocode",{}).get("formatted_address")
         except Exception:
             pass
@@ -390,13 +405,15 @@ async def async_setup_entry(hass, entry):
         state["store"] = store
         state["active"] = dict(entry.data)
         state["proxy_sessions"] = {}
+        state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.40-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.41-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)
         state.pop("proxy_sessions", None)
+        state.pop("proxy_runtime", None)
         state.pop("address_cache", None)
         state.pop("address_runtime", None)
         try:
@@ -417,6 +434,7 @@ async def async_unload_entry(hass, entry):
     frontend.async_remove_panel(hass, PANEL)
     hass.data[DOMAIN].pop("active",None)
     hass.data[DOMAIN].pop("proxy_sessions",None)
+    hass.data[DOMAIN].pop("proxy_runtime",None)
     hass.data[DOMAIN].pop("address_cache",None)
     hass.data[DOMAIN].pop("address_runtime",None)
     store = hass.data[DOMAIN].pop("store",None)

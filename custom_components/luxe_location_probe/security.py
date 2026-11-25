@@ -21,3 +21,25 @@ def session_path(value):
     if not isinstance(value, str) or not re.fullmatch(r"/api/luxe_location/[A-Za-z0-9_-]{43}/_AMapService", value):
         raise ValueError("Invalid session path")
     return value
+
+async def read_limited(content, limit):
+    """Read the entire bounded response, not a single potentially partial chunk."""
+    body = bytearray()
+    async for chunk in content.iter_chunked(16384):
+        if len(body) + len(chunk) > limit:
+            raise ValueError("Response too large")
+        body.extend(chunk)
+    return bytes(body)
+
+def reserve_proxy(runtime, session, now):
+    """Single event-loop admission; no awaits between accounting and reservation."""
+    times = session["times"]
+    times[:] = [t for t in times if now-t < 60]
+    total = runtime["times"]
+    total[:] = [t for t in total if now-t < 60]
+    if len(times) >= 120 or len(total) >= 600 or runtime["inflight"] >= 8:
+        return False
+    times.append(now)
+    total.append(now)
+    runtime["inflight"] += 1
+    return True
