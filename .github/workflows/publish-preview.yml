@@ -1,0 +1,27 @@
+name: Publish Locaris v0.2.7-preview
+on:
+  push:
+    branches: ['release/v0.2.7-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.7-preview >/dev/null 2>&1; then exit 0; fi
+          cat > /tmp/notes.md <<'EOF'
+          ## 界面细节优化
+          - 定位时间轴：缩减上下内边距、标题间距、单条记录间距及地址与时间间距。
+          - 已移除设备：0 台时隐藏整个区块，非空时显示并保留展开状态。
+          - 移除设备管理页面首次开启历史记录提示文字。
+          - 手机端底部 Tab 移除选中图标背景，保留选中颜色与原有图标尺寸。
+          - 不改变采集、历史去重、数据库结构和刷新逻辑。
+          - 新增两项 UI 回归测试，CI 已通过；实际终端视觉效果待验收。
+          EOF
+          gh release create v0.2.7-preview --target b402c2b72fb1a552c3948bcafe99e82dd77f083d --title "Locaris v0.2.7-preview" --notes-file /tmp/notes.md --prerelease --latest=false
