@@ -50,6 +50,9 @@ async def ws_config(hass, connection, msg):
         connection.send_error(msg["id"], "not_loaded", "Probe not loaded")
         return
     now = time.monotonic()
+    for token in list(sessions):
+        if sessions[token]["expires"]+86400 <= now:
+            sessions.pop(token)
     renew=msg.get("renew_path","")
     if renew:
         prefix="/api/luxe_location/"
@@ -62,9 +65,6 @@ async def ws_config(hass, connection, msg):
         session["expires"]=now+43200
         connection.send_result(msg["id"],{"map_key":data["map_key"],"proxy_path":renew})
         return
-    for token in list(sessions):
-        if sessions[token]["expires"]+86400 <= now:
-            sessions.pop(token)
     if len(sessions) >= 64:
         sessions.pop(next(iter(sessions)))
     token = secrets.token_urlsafe(32)
@@ -126,7 +126,7 @@ async def ws_storage(hass, connection, msg):
     except ValueError:
         connection.send_error(msg["id"], "invalid_device", "Invalid GPS device")
     except Exception:
-        _LOGGER.warning("Location storage operation failed (no coordinates logged)")
+        store.warn("Location storage operation failed (no coordinates logged)")
         connection.send_error(msg["id"], "storage_failed", "Storage operation failed")
 
 @websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/history", vol.Required("entity_id"): checked(security.entity_id), vol.Required("start"): checked(security.timestamp), vol.Required("end"): checked(security.timestamp), vol.Optional("collapse_repeated", default=False): bool})
@@ -160,7 +160,7 @@ async def ws_history(hass, connection, msg):
         try:
             rows, hidden, truncated = await store.run(read)
         except Exception:
-            _LOGGER.warning("Location history query failed (no coordinates logged)")
+            store.warn("Location history query failed (no coordinates logged)")
             connection.send_error(msg["id"], "history_failed", "History query failed")
             return
     if not await current_admin(hass, connection) or not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store or entity not in store.managed or store.generations.get(entity, 0) != generation:
@@ -269,7 +269,7 @@ async def ws_address(hass,connection,msg):
     try:
         await resolve_address(hass, connection, msg, state, store, entity, runtime)
     except Exception:
-        _LOGGER.warning("Location address operation failed (no coordinates logged)")
+        store.warn("Location address operation failed (no coordinates logged)")
         connection.send_error(msg["id"], "address_failed", "Address operation failed")
     finally:
         runtime["pending"] -= 1
@@ -422,7 +422,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.44.1-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.45-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)

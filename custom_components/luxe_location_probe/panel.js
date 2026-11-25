@@ -1,4 +1,4 @@
-const VERSION='0.1.44.1-preview';
+const VERSION='0.1.45-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -209,6 +209,7 @@ class LocationPanel extends HTMLElement{
     }else{
       const key=JSON.stringify([action,entity_id,delete_history]);
       const last=this.pendingActions[this.pendingActions.length-1];if(last?.key===key||(!last&&this.refreshToken?.key===key))return;
+      if(this.pendingActions.length>=32){this.status('待处理操作过多，请稍后重试');return;}
       this.pendingActions.push({action,entity_id,delete_history,key});
     }
     this.drainRefresh();

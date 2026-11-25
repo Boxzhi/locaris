@@ -50,6 +50,12 @@ class Store:
         self.discovery = None
         self.importing = {}
         self.retry_import = {}
+        self.backfill_active = set()
+        self.backfill_pending = {}
+        self.pending_writes = 0
+        self.scanning = False
+        self.periodic_running = False
+        self.warning_times = {}
         self.generations = {}
         self.last_valid = {}
         self.initialized = False
@@ -173,16 +179,27 @@ class Store:
                 await self.run(lambda c: c.executemany("INSERT OR IGNORE INTO probe_management VALUES (?,0)", [(e,) for e in new]))
                 self.managed.update(new)
 
+    def warn(self, message):
+        now = time.monotonic()
+        if now - self.warning_times.get(message, -1000) >= 60:
+            self.warning_times[message] = now
+            _LOGGER.warning(message)
+
     async def scan_tick(self, _now):
+        if self.scanning or not self.active:
+            return
+        self.scanning = True
         try:
-            await self.discover()
-        except (sqlite3.Error, OSError):
-            _LOGGER.warning("Location discovery deferred (no coordinates logged)")
-        if self.active and self.ready:
-            for entity, deadline in list(self.retry_import.items()):
-                if time.monotonic() >= deadline:
-                    self.retry_import.pop(entity, None)
-                    self.schedule_backfill(entity)
+            try:
+                await self.discover()
+            except (sqlite3.Error, OSError):
+                self.warn("Location discovery deferred (no coordinates logged)")
+            if self.active and self.ready:
+                for entity, deadline in list(self.retry_import.items()):
+                    if time.monotonic() >= deadline:
+                        self.schedule_backfill(entity)
+        finally:
+            self.scanning = False
 
     async def add(self, entity):
         state = self.hass.states.get(entity)
@@ -221,23 +238,50 @@ class Store:
         self.generations[entity] = self.generations.get(entity, 0) + 1
         self.last_valid.pop(entity, None)
         self.retry_import.pop(entity, None)
+        self.backfill_pending.pop(entity, None)
 
     @callback
     def schedule_backfill(self, entity):
         if not self.active or not self.ready or entity not in self.devices:
             return
         generation = self.generations.get(entity, 0)
-        if self.importing.get(entity) == generation:
+        key = (entity, generation)
+        if key in self.backfill_active:
             return
         self.retry_import.pop(entity, None)
+        if len(self.backfill_active) >= 2:
+            self.backfill_pending[entity] = generation
+            return
+        self.backfill_pending.pop(entity, None)
+        self.backfill_active.add(key)
         self.importing[entity] = generation
-        self.spawn(self.backfill(entity, generation))
+        if self.spawn(self.backfill(entity, generation)) is None:
+            self.backfill_active.discard(key)
+            if self.importing.get(entity) == generation:
+                self.importing.pop(entity, None)
+            self.defer_backfill(entity, generation)
+
+    @callback
+    def drain_backfills(self):
+        if not self.active or not self.ready:
+            return
+        while self.backfill_pending and len(self.backfill_active) < 2:
+            entity = next(iter(self.backfill_pending))
+            generation = self.backfill_pending.pop(entity)
+            if entity in self.devices and self.generations.get(entity, 0) == generation:
+                self.schedule_backfill(entity)
 
     @callback
     def spawn(self, coro):
-        task = self.hass.async_create_task(coro)
+        try:
+            task = self.hass.async_create_task(coro)
+        except Exception:
+            coro.close()
+            self.warn("Location background task creation failed")
+            return None
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
+        return task
 
     @callback
     def listen(self):
@@ -248,7 +292,7 @@ class Store:
             except Exception:
                 # Do not register a second listener if the previous one may remain.
                 self.unsub = unsubscribe
-                _LOGGER.warning("Location listener replacement deferred")
+                self.warn("Location listener replacement deferred")
                 return
         if self.active and self.devices:
             for entity in self.devices:
@@ -276,7 +320,21 @@ class Store:
         # last observed valid payload; a first unknown snapshot is not a fix.
         if previous is None or previous == p[1:]:
             return
-        self.spawn(self.write(entity, p, self.generations.get(entity, 0)))
+        generation = self.generations.get(entity, 0)
+        if self.pending_writes >= 256:
+            self.defer_backfill(entity, generation)
+            self.warn("Location write queue full; Recorder recovery requested (no coordinates logged)")
+            return
+        task = self.spawn(self.write(entity, p, generation))
+        if task is None:
+            self.defer_backfill(entity, generation)
+            return
+        self.pending_writes += 1
+        task.add_done_callback(self.write_finished)
+
+    @callback
+    def write_finished(self, _task):
+        self.pending_writes = max(0, self.pending_writes - 1)
 
     @staticmethod
     def insert(con, entity, rows, source, cursor=None):
@@ -299,7 +357,8 @@ class Store:
                 if self.active and self.ready and entity in self.devices and self.generations.get(entity, 0) == generation:
                     await self.run(self.insert, entity, [p], "state_change")
         except Exception:
-            _LOGGER.warning("Location probe write failed (no coordinates logged)")
+            self.defer_backfill(entity, generation)
+            self.warn("Location probe write failed (no coordinates logged)")
 
     async def enable(self, entity, import_history):
         state = self.hass.states.get(entity)
@@ -345,7 +404,7 @@ class Store:
 
     def defer_backfill(self, entity, generation):
         if self.active and entity in self.devices and self.generations.get(entity, 0) == generation:
-            self.retry_import[entity] = time.monotonic() + 300
+            self.retry_import.setdefault(entity, time.monotonic() + 300)
 
     async def backfill(self, entity, generation):
         try:
@@ -416,10 +475,12 @@ class Store:
             raise
         except Exception:
             self.defer_backfill(entity, generation)
-            _LOGGER.warning("Location probe Recorder import failed (no coordinates logged)")
+            self.warn("Location probe Recorder import failed (no coordinates logged)")
         finally:
+            self.backfill_active.discard((entity, generation))
             if self.importing.get(entity) == generation:
                 self.importing.pop(entity, None)
+            self.drain_backfills()
 
     def checkpoint(self):
         with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=3)) as con:
@@ -431,7 +492,7 @@ class Store:
         try:
             await self.hass.async_add_executor_job(self.checkpoint)
         except (sqlite3.Error, OSError):
-            _LOGGER.warning("Location WAL checkpoint deferred (no coordinates logged)")
+            self.warn("Location WAL checkpoint deferred (no coordinates logged)")
 
     def checkpoint_if_needed(self):
         # A closed SQLite connection may already have checkpointed the WAL.
@@ -455,15 +516,21 @@ class Store:
             self.last_cleanup = now_ms()
 
     async def periodic(self, _now):
-        if self.active:
+        if not self.active or self.periodic_running:
+            return
+        self.periodic_running = True
+        try:
             try:
                 await self.cleanup()
             except (sqlite3.Error, OSError):
-                _LOGGER.warning("Location periodic cleanup failed (no coordinates logged)")
+                self.warn("Location periodic cleanup failed (no coordinates logged)")
             if not self.active:
                 return
             for entity in sorted(self.devices):
-                self.schedule_backfill(entity)
+                if self.retry_import.get(entity, 0) <= time.monotonic():
+                    self.schedule_backfill(entity)
+        finally:
+            self.periodic_running = False
 
     @staticmethod
     def cached_address(con, entity, lon, lat):
@@ -532,4 +599,7 @@ class Store:
                     self.initialized = False
             self.importing.clear()
             self.retry_import.clear()
+            self.backfill_active.clear()
+            self.backfill_pending.clear()
             self.last_valid.clear()
+            self.warning_times.clear()
