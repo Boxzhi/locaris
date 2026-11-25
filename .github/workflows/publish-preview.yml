@@ -1,0 +1,26 @@
+name: Publish Locaris v0.2.9-preview
+on:
+  push:
+    branches: ['release/v0.2.9-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.9-preview >/dev/null 2>&1; then exit 0; fi
+          cat > /tmp/notes.md <<'EOF'
+          ## 实时位置时间优化
+          - 列表展示最近可确认的经纬度或 GPS 精度变化时间，不再使用实体最后更新时间。
+          - 忽略电量等无关属性变化、重复定位和跨天重复记录。
+          - 已开启记录的设备可从授权历史恢复变化时间；未开启的设备仅在内存跟踪，无法确认时显示定位时间未知。
+          - 原有地址查询校验及历史采集逻辑保持不变，无数据库结构变更。
+          - 新增四项回归测试，CI 全部通过；实际 HA 运行效果待验收。
+          EOF
+          gh release create v0.2.9-preview --target db6e0642a795dfaa52ad499f0b7d64ee00c08829 --title "Locaris v0.2.9-preview" --notes-file /tmp/notes.md --prerelease --latest=false
