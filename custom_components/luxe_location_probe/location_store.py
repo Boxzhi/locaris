@@ -341,6 +341,15 @@ class Store:
         with closing(sqlite3.connect(self.path, timeout=10)) as con:
             con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
+    def checkpoint_if_needed(self):
+        # A closed SQLite connection may already have checkpointed the WAL.
+        # Keep explicit checkpoints for pause, removal and unload.
+        try:
+            if self.path.with_name(self.path.name + "-wal").stat().st_size > 0:
+                self.checkpoint()
+        except FileNotFoundError:
+            pass
+
     async def cleanup(self):
         async with self.lock:
             if not self.active:
@@ -350,7 +359,7 @@ class Store:
                 c.execute("DELETE FROM probe_locations WHERE recorded_at < ?", (cutoff,))
                 c.execute("DELETE FROM probe_address_cache WHERE created_at < ?", (cutoff,))
             await self.run(prune)
-            await self.hass.async_add_executor_job(self.checkpoint)
+            await self.hass.async_add_executor_job(self.checkpoint_if_needed)
             self.last_cleanup = now_ms()
 
     async def periodic(self, _now):

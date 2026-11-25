@@ -1,4 +1,4 @@
-const VERSION='0.1.27.1-preview';
+const VERSION='0.1.28-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -403,7 +403,7 @@ class LocationPanel extends HTMLElement{
         if(this.historyResolved?.has(item.at)||this.historyFailed?.has(item.at))continue;
         const address=await this.resolveAddress(item.entity,item.at,item.target);
         if(item.generation===this.historyAddressGeneration&&item.seq===this.historySeq&&this.page==='history'){
-          if(address){this.historyResolved.set(item.at,address);this.historyRegroup?.();}
+          if(address){this.historyResolved.set(item.at,address);this.historyRegroup?.(item.at,address);}
           else{this.historyFailed?.add(item.at);for(const node of this.querySelectorAll('.lx-group-address'))if(node._lxRecordedAt===item.at)node.textContent='地址暂不可用';}
         }
       }
@@ -450,9 +450,8 @@ class LocationPanel extends HTMLElement{
     this.selectedHistoryIndex=index;
     for(const item of this.historyNumberMarkers||[]){
       const selected=index!==null&&item.indices.includes(index);
-      item.dot.classList.toggle('lx-track-selected',selected);
-      item.dot.textContent=item.label;
-      item.marker.setzIndex?.(selected?200:120);
+      if(item.dot.textContent!==item.label)item.dot.textContent=item.label;
+      if(item.selected!==selected){item.selected=selected;item.dot.classList.toggle('lx-track-selected',selected);item.marker.setzIndex?.(selected?200:120);}
     }
   }
   async loadHistory(){
@@ -470,6 +469,7 @@ class LocationPanel extends HTMLElement{
       const title=el('div',undefined,'lx-title');title.append(el('h2','定位时间轴'),el('span',r.points.length+' 个定位点'+(r.truncated?' · 已截断':''),'lx-muted'));timeline.replaceChildren(title);
       if(!r.points.length)timeline.append(el('p','当日暂无定位记录','lx-muted'));
       let shown=0,expanded=null,groups=this.historyGroups(r.points),limit=50,rendering=false;
+      const coordByTime=new Map(),timesByCoord=new Map();for(const p of r.points){const key=p.latitude+','+p.longitude;coordByTime.set(p.recorded_at,key);if(!timesByCoord.has(key))timesByCoord.set(key,[]);timesByCoord.get(key).push(p.recorded_at);}
       const entity=select.value,watchAddress=this.watchHistoryAddresses(entity,seq);
       const body=el('div',undefined,'lx-list-scroll');timeline.append(body);
       const timeOnly=t=>new Date(t).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
@@ -501,11 +501,10 @@ class LocationPanel extends HTMLElement{
         if(scroll!=null)body.scrollTop=scroll;
         rendering=false;
       };
-      this.historyRegroup=()=>{
+      this.historyRegroup=(at,address)=>{
         if(seq!==this.historySeq||!body.isConnected)return;
-        // Propagate addresses only for exactly equal coordinates.
-        const known=new Map();for(const p of r.points){const addr=this.historyResolved.get(p.recorded_at);if(addr)known.set(p.latitude+','+p.longitude,addr);}
-        for(const p of r.points){const addr=known.get(p.latitude+','+p.longitude);if(addr)this.historyResolved.set(p.recorded_at,addr);}
+        // Only propagate the newly resolved address to exactly equal coordinates.
+        for(const t of timesByCoord.get(coordByTime.get(at))||[])this.historyResolved.set(t,address);
         const next=this.historyGroups(r.points);
         if(JSON.stringify(next)===JSON.stringify(groups)){for(const node of body.querySelectorAll('.lx-group-address')){const addr=this.historyResolved.get(node._lxRecordedAt);if(addr)node.textContent=addr;}return;}
         groups=next;this.historyTimelineGroups=groups;
@@ -564,12 +563,12 @@ class LocationPanel extends HTMLElement{
       let item=previous.get(key);
       if(!item){
         const dot=el('div',label,'lx-track-end lx-track-number');dot.style.background=background;
-        const marker=new A.Marker({position:xy[i],content:dot,anchor:'center',title:'定位点 '+label,zIndex:120});
+        const marker=new A.Marker({position:xy[i],content:dot,anchor:'center',title:'定位点 '+indices.map(n=>n+1).join('、'),zIndex:120});
         item={marker,dot,indices,label,background};
         marker.on('click',()=>{if(this.map!==map||this.historySeq!==seq||this.page!=='history'||this.historyMarkerMap?.get(key)!==item)return;const selected=this.selectedHistoryIndex,pos=item.indices.indexOf(selected);this.openHistoryPoint?.(item.indices[(pos+1)%item.indices.length]);});
         added.push(marker);
       }else{
-        if(item.label!==label){item.dot.textContent=label;item.marker.setTitle?.('定位点 '+label);}
+        if(item.label!==label){item.dot.textContent=label;item.marker.setTitle?.('定位点 '+indices.map(n=>n+1).join('、'));}
         if(item.background!==background)item.dot.style.background=background;
         item.indices=indices;item.label=label;item.background=background;
       }
@@ -613,8 +612,10 @@ class LocationPanel extends HTMLElement{
       this.liveAddressCache.set(key,entry);
     }
     const address=await entry.promise;
-    if(target.isConnected&&target._lxAddressToken===token&&this.page==='live'&&this.liveAddressCache.get(key)===entry)target.textContent=address?(full?address:address.replace(/^(?:[^省]{2,8}省|内蒙古自治区|广西壮族自治区|宁夏回族自治区|新疆维吾尔自治区|西藏自治区)/,'')):'地址暂不可用';
-    if(target.isConnected&&target._lxAddressToken===token&&this.page==='live')target._lxRetryAt=this.liveAddressCache.get(key)===entry?(address?0:entry.until):Date.now()+30000;
+    const cached=this.liveAddressCache.get(key),current=this.data?.candidates?.find(v=>v.entity_id===d.entity_id);
+    const usable=cached===entry||(!cached&&current?.managed&&current.enabled&&current.recording_generation===d.recording_generation&&current.position?.latitude===p.latitude&&current.position?.longitude===p.longitude);
+    if(target.isConnected&&target._lxAddressToken===token&&this.page==='live'&&usable)target.textContent=address?(full?address:address.replace(/^(?:[^省]{2,8}省|内蒙古自治区|广西壮族自治区|宁夏回族自治区|新疆维吾尔自治区|西藏自治区)/,'')):'地址暂不可用';
+    if(target.isConnected&&target._lxAddressToken===token&&this.page==='live')target._lxRetryAt=usable?entry.until:Date.now()+30000;
   }
   color(id){
     this.deviceColors??=new Map();const palette=['#4387e8','#0ca87d','#a855f7','#e58b25','#e05e86','#0891b2','#84a832','#c45e38'];
