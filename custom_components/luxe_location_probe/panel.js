@@ -1,8 +1,9 @@
-const VERSION='0.1.45.1-preview';
+const VERSION='0.1.46-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
+const expiredMapSession=e=>e?.code==='session_expired'||String(e?.message||e).includes('Map session expired; reload panel');
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
-  if(!sdkConfigPromise)sdkConfigPromise=(async()=>{const old=sdkSession?.config;const config=await hass.callWS({type:NS+'config',...(old?{renew_path:old.proxy_path}:{})});if(old&&config.proxy_path!==old.proxy_path)throw new Error('地图会话已失效，请刷新位置中心');sdkSession={config,at:Date.now()};return config;})().finally(()=>{sdkConfigPromise=null;});
+  if(!sdkConfigPromise)sdkConfigPromise=(async()=>{const old=sdkSession?.config;const config=await hass.callWS({type:NS+'config',...(old?{renew_path:old.proxy_path}:{})});if(old&&config.proxy_path!==old.proxy_path)throw Object.assign(new Error('地图会话已失效，请刷新位置中心'),{code:'session_expired'});sdkSession={config,at:Date.now()};return config;})().finally(()=>{sdkConfigPromise=null;});
   return sdkConfigPromise;
 }
 function sdk(config){
@@ -33,9 +34,10 @@ class LocationPanel extends HTMLElement{
     if(this.isConnected&&old?.user?.is_admin&&!v?.user?.is_admin){this.disconnectedCallback();this.accessRevoked=true;this.replaceChildren();return;}
     if(this.isConnected&&this.accessRevoked){if(v?.user?.is_admin){this.accessRevoked=false;this.connectedCallback();}return;}
     if(this.isConnected&&this.viewportResize&&(old?.themes!==v?.themes||old?.user!==v?.user))this.syncHostLayout();
+    if(this.isConnected&&this.started&&old?.user&&!old.user.is_admin&&v?.user?.is_admin)this.started=false;
     if(this.isConnected&&!this.started)this.start();
     if(this.started&&v?.connected===false){this.pendingActions=[];if(old?.connected!==false)this.status('HA 连接已断开');return;}
-    if(this.started&&old?.connected===false&&v?.connected!==false&&!document.hidden){this.status();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData)this.loadHistory();else this.drainHistoryAddresses();}}
+    if(this.started&&old?.connected===false&&v?.connected!==false&&!document.hidden){this.status();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&!this.historyLoading)this.loadHistory();else this.drainHistoryAddresses();}}
     if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&d.enabled&&(old.states[d.entity_id]?.last_updated!==v.states[d.entity_id]?.last_updated||old.states[d.entity_id]?.state!==v.states[d.entity_id]?.state)))this.liveDirty=true;
   }
   connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
@@ -179,17 +181,17 @@ class LocationPanel extends HTMLElement{
     else this.refresh();
     if(this.isConnected&&epoch===this.epoch){
       this.timer=setInterval(()=>this.refreshTick(),5000);
-      this.visibilityHandler=()=>{if(!document.hidden){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&this._hass?.connected!==false)this.loadHistory();else this.drainHistoryAddresses();}}};
+      this.visibilityHandler=()=>{if(!document.hidden){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&!this.historyLoading&&this._hass?.connected!==false)this.loadHistory();else this.drainHistoryAddresses();}}};
       document.addEventListener('visibilitychange',this.visibilityHandler);
     }
   }
   refreshMapSession(){
     if(this._hass?.connected===false||!sdkSession||Date.now()<(this.mapRenewRetryAt||0)||(this.page!=='live'&&this.page!=='history'))return;
     const epoch=this.epoch,target=this.querySelector('.lx-map-inner'),map=this.map;
-    if(!target||!map||this.mapRenewPending)return;
+    if(!target||!map||this.mapRenewPending||this.mapSessionExpired)return;
     const token={};this.mapRenewPending=token;
     const current=()=>this.isConnected&&epoch===this.epoch&&this.map===map&&target.isConnected&&this.mapRenewPending===token;
-    ensureSdkConfig(this._hass).then(()=>{if(current()&&this.mapSessionError){this.mapSessionError=false;this.mapStatus(target);}}).catch(()=>{if(current()){this.mapRenewRetryAt=Date.now()+60000;this.mapSessionError=true;this.mapStatus(target,'地图会话暂不可用',()=>this.retryMap(target));}}).finally(()=>{if(this.mapRenewPending===token)this.mapRenewPending=null;});
+    ensureSdkConfig(this._hass).then(()=>{if(current()&&this.mapSessionError){this.mapSessionError=false;this.mapStatus(target);}}).catch(e=>{if(current()){this.mapRenewRetryAt=Date.now()+60000;this.mapSessionError=true;this.mapSessionExpired=expiredMapSession(e);this.mapStatus(target,this.mapSessionExpired?'地图会话已失效，请重新加载':'地图会话暂不可用',()=>this.retryMap(target),this.mapSessionExpired?'重新加载':'重试');}}).finally(()=>{if(this.mapRenewPending===token)this.mapRenewPending=null;});
   }
   refreshTick(now=Date.now()){
     if(document.hidden||!this.isConnected||!this.started||this._hass?.connected===false)return;
@@ -200,7 +202,7 @@ class LocationPanel extends HTMLElement{
   }
   status(s='',retry){const n=this.querySelector('.lx-error');if(!n)return;n.replaceChildren();n.hidden=!s;if(s){n.append(el('span',s));if(retry)n.append(button('重试',retry));}}
   stateView(message,retry){const node=el('div',undefined,'lx-state lx-muted');node.setAttribute('role','status');node.append(el('span',message));if(retry)node.append(button('重试',retry));return node;}
-  mapStatus(target,message='',retry){const node=target.parentElement?.querySelector('.lx-map-state');if(!node)return;node.replaceChildren();node.hidden=!message;if(message){node.append(el('span',message));if(retry)node.append(button('重试',retry));}}
+  mapStatus(target,message='',retry,retryLabel='重试'){const node=target.parentElement?.querySelector('.lx-map-state');if(!node)return;node.replaceChildren();node.hidden=!message;if(message){node.append(el('span',message));if(retry)node.append(button(retryLabel,retry));}}
   refresh(action='list',entity_id,delete_history=false){
     if(!this.isConnected||!this._hass?.user?.is_admin||this._hass.connected===false)return;
     if(action==='list'){
@@ -233,7 +235,7 @@ class LocationPanel extends HTMLElement{
   }
   releaseHistory(){
     this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyTimelineGroups=null;
-    this.historyResolved=null;this.historyFailed=null;this.historyFlags=null;this.historyRegroup=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.selectedHistoryIndex=null;
+    this.historyResolved=null;this.historyFailed=null;this.historyFlags=null;this.historyRegroup=null;this.historyLoading=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.selectedHistoryIndex=null;
   }
   closeHistoryCalendar(){
     if(this.calendarOutside){document.removeEventListener('pointerdown',this.calendarOutside,true);this.calendarOutside=null;}
@@ -366,7 +368,7 @@ class LocationPanel extends HTMLElement{
       this.loadHistory();
     }
   }
-  retryMap(target){if(!this.isConnected||!target.isConnected||!this._hass?.user?.is_admin)return;if(this.map){this.mapRenewRetryAt=0;this.mapStatus(target,'正在恢复地图会话…');this.refreshMapSession();return;}this.buildMap(target);}
+  retryMap(target){if(!this.isConnected||!target.isConnected||!this._hass?.user?.is_admin)return;if(this.mapSessionExpired){location.reload();return;}if(this.map){this.mapRenewRetryAt=0;this.mapStatus(target,'正在恢复地图会话…');this.refreshMapSession();return;}this.buildMap(target);}
   async buildMap(target){
     const epoch=this.epoch,build={};this.mapBuild=build;this.mapStatus(target,'正在加载地图…');
     const valid=()=>this.isConnected&&epoch===this.epoch&&this.mapBuild===build&&target.isConnected&&this._hass?.user?.is_admin;
@@ -380,10 +382,10 @@ class LocationPanel extends HTMLElement{
       on('dragstart',()=>{this.cancelCamera();this.liveExpanded=null;});
       if(this.page==='live'){on('zoomend',()=>this.scheduleCluster());on('moveend',()=>this.scheduleCluster());}
       this.layer(this.mapLayer||'standard');if(this.page==='live')this.syncMarkers();else this.paintHistory();if(valid())this.mapStatus(target);
-    }catch(e){const current=valid();if(map&&this.map===map)this.destroyMap();if(current&&target.isConnected)this.mapStatus(target,'地图加载失败',()=>this.retryMap(target));}
+    }catch(e){const current=valid();if(map&&this.map===map)this.destroyMap();if(current&&target.isConnected){this.mapSessionExpired=expiredMapSession(e);this.mapStatus(target,this.mapSessionExpired?'地图会话已失效，请重新加载':'地图加载失败',()=>this.retryMap(target),this.mapSessionExpired?'重新加载':'重试');}}
   }
   destroyMap(){
-    this.mapBuild=null;this.mapRenewPending=null;this.mapSessionError=false;this.mapRenewRetryAt=0;this.cancelCamera();if(this.clusterFrame!=null){cancelAnimationFrame(this.clusterFrame);this.clusterFrame=null;}
+    this.mapBuild=null;this.mapRenewPending=null;this.mapSessionError=false;this.mapSessionExpired=false;this.mapRenewRetryAt=0;this.cancelCamera();if(this.clusterFrame!=null){cancelAnimationFrame(this.clusterFrame);this.clusterFrame=null;}
     this.liveExpanded=null;this.liveClusters=[];this.clusterSignature=null;this.historyOverlays=[];this.historyNumberMarkers=[];this.historyTrackData=null;this.historyTrackOverlays=null;this.historyXY=null;this.historyMarkerMap=null;this.appliedLayer=null;this.markers=new Map();this.didFit=false;
     const map=this.map,listeners=this.mapListeners||[];this.map=null;this.mapListeners=[];
     if(map){for(const [name,cb] of listeners){try{map.off(name,cb);}catch(e){}}try{map.destroy();}catch(e){}}
@@ -509,12 +511,12 @@ class LocationPanel extends HTMLElement{
   async loadHistory(){
     const select=this.querySelector('.lx-history-filter select'),day=this.querySelector('[data-history-date]'),timeline=this.querySelector('#history-timeline');
     if(!select||!day||!timeline||!this._hass?.user?.is_admin)return;
-    this.stopHistoryAddresses();this.historyResolved=new Map();this.historyFailed=new Set();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyFlags=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.paintHistory();
+    this.stopHistoryAddresses();this.historyResolved=new Map();this.historyFailed=new Set();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyLoading=null;this.historyFlags=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.paintHistory();
     timeline.replaceChildren(el('h2','定位时间轴'));
     if(!select.value||!day.value){timeline.append(this.stateView(this.data?'暂无可查询设备':this.dataError||'正在读取设备…'));return;}
     if(this._hass.connected===false){timeline.append(this.stateView('HA 连接已断开'));return;}
     const start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
-    timeline.append(this.stateView('正在加载…'));
+    timeline.append(this.stateView('正在加载…'));this.historyLoading=seq;
     try{
       const r=await this._hass.callWS({type:NS+'history',entity_id:select.value,start:start.getTime(),end:end.getTime(),collapse_repeated:true});
       if(this.page!=='history'||seq!==this.historySeq||!timeline.isConnected)return;
@@ -568,7 +570,7 @@ class LocationPanel extends HTMLElement{
       this.historyTimelineGroups=groups;render();
       this.openHistoryPoint=i=>{if(seq!==this.historySeq||!body.isConnected)return;const g=groups.findIndex(v=>v.includes(i));if(g<0)return;if(g>=limit){limit=Math.ceil((g+1)/50)*50;render(true);}const row=body.querySelector('[data-group-start="'+groups[g][0]+'"]');if(row){row.openPoint(i);this.revealInList(body,row);}};
       this.paintHistory();
-    }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),this.stateView('历史轨迹查询失败',()=>this.loadHistory()));}
+    }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),this.stateView('历史轨迹查询失败',()=>this.loadHistory()));}finally{if(this.historyLoading===seq)this.historyLoading=null;}
   }
   animatePoint(detail,open){
     if(detail._lxAnimation){detail._lxAnimation.cancel();detail._lxAnimation=null;}
