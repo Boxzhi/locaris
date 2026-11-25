@@ -145,7 +145,8 @@ async def ws_storage(hass, connection, msg):
                 "available":pos is not None,"recording_generation":store.generations.get(entity,0)}
             if msg["include_position"] and entity in store.managed and pos is not None:
                 item["position"] = {"latitude":pos[0],"longitude":pos[1],"accuracy":pos[2],
-                    "updated_at":int(state.last_updated.timestamp()*1000)}
+                    "updated_at":int(state.last_updated.timestamp()*1000),
+                    "position_changed_at":store.live_clock.timestamp(entity,pos)}
             devices.append(item)
         connection.send_result(msg["id"], {"candidates":devices, "policy":dict(store.policy), "delete_on_remove":delete_on_remove(entry), **({"storage":stats} if stats is not None else {})})
     except PermissionError:
@@ -481,7 +482,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.8-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.9-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("entry_id", None)

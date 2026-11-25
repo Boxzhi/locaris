@@ -13,6 +13,7 @@ import time
 from .history_logic import (recorder_daily_changes, day_bounds, prepare_daily_replay,
                             prune_provisional_anchors)
 from .history_sync import HistorySync
+from .live_position_clock import LivePositionClock, last_recorded_change
 from .const import (WINDOW, HISTORY_RETENTION_DAYS, DAY_MS,
     BACKFILL_RETRY_S, BACKFILL_OVERLAP_MS, RECORDER_MIN_DELAY_MS,
     RECORDER_DEFAULT_COMMIT_S, RECORDER_COMMIT_BUFFER_MS, RECORDER_BOUNDARY_MS,
@@ -73,6 +74,7 @@ class Store:
         self.pending_writes = 0
         self.warning_times = {}
         self.generations = {}
+        self.live_clock = LivePositionClock()
         self.last_valid = {}
         self.last_valid_days = {}
         self.day_zone = ZoneInfo(hass.config.time_zone or 'UTC')
@@ -160,6 +162,8 @@ class Store:
         await self.run(prepare_daily_replay, sorted(self.devices), now_ms()-WINDOW)
         await self.discover()
         await self.cleanup()
+        for entity in self.managed:
+            self.live_clock.seed(entity, position(self.hass.states.get(entity)))
         self.ready = True
         self.listen()
         self.schedule = Schedule(self.policy, time.monotonic())
@@ -204,6 +208,8 @@ class Store:
             if new:
                 await self.run(lambda c: c.executemany("INSERT OR IGNORE INTO locaris_management VALUES (?,0)", [(e,) for e in new]))
                 self.managed.update(new)
+                for entity in new:
+                    self.live_clock.seed(entity, position(self.hass.states.get(entity)))
 
     def warn(self, message):
         now = time.monotonic()
@@ -216,7 +222,10 @@ class Store:
         if not self.active or not self.ready:
             return
         entity = event.data.get("entity_id", "")
-        if not entity.startswith("device_tracker.") or entity in self.managed or entity in self.excluded:
+        if not entity.startswith("device_tracker.") or entity in self.excluded:
+            return
+        if entity in self.managed:
+            self.live_clock.observe(entity, point(event.data.get("new_state")), position(event.data.get("old_state")))
             return
         if position(event.data.get("new_state")) is None:
             return
@@ -292,6 +301,7 @@ class Store:
             await self.run(lambda c: c.execute("INSERT INTO locaris_management VALUES (?,0) ON CONFLICT(entity_id) DO UPDATE SET excluded=0", (entity,)))
             self.excluded.discard(entity)
             self.managed.add(entity)
+            self.live_clock.seed(entity, position(self.hass.states.get(entity)))
 
     async def remove(self, entity, delete_history):
         async with self.lock:
@@ -310,6 +320,7 @@ class Store:
             self.invalidate(entity)
             self.devices.discard(entity)
             self.managed.discard(entity)
+            self.live_clock.discard(entity)
             self.excluded.add(entity)
             self.listen()
             await self.checkpoint_safely()
@@ -597,6 +608,17 @@ class Store:
                     self.recovery_from.pop(entity, None)
             if self.active and entity in self.devices and self.generations.get(entity, 0) == generation and entity not in self.retry_import:
                 self.history_sync.completed.add(entity)
+                # Reuse only already-authorized historical rows; never query
+                # Recorder separately for devices with recording disabled.
+                current_payload = position(self.hass.states.get(entity))
+                if current_payload is not None and self.live_clock.timestamp(entity, current_payload) is None:
+                    try:
+                        stamp = await self.run(last_recorded_change, entity, max(earliest, now_ms()-WINDOW), current_payload)
+                        if (self.active and entity in self.devices and self.generations.get(entity, 0) == generation
+                                and position(self.hass.states.get(entity)) == current_payload):
+                            self.live_clock.restore(entity, current_payload, stamp)
+                    except (sqlite3.Error, OSError):
+                        self.warn("Live position timestamp recovery deferred (no coordinates logged)")
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -716,6 +738,7 @@ class Store:
             self.recovery_from.clear()
             self.backfill_active.clear()
             self.backfill_pending.clear()
+            self.live_clock.clear()
             self.last_valid.clear()
             self.last_valid_days.clear()
             self.warning_times.clear()

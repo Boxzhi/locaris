@@ -1,4 +1,4 @@
-const VERSION='0.2.8-preview';
+const VERSION='0.2.9-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,HISTORY_TODAY_MS:10000,HISTORY_PENDING_MS:5000,HISTORY_PAST_MS:60000,READ_TIMEOUT_MS:15000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:400,MAP_MEDIUM_MS:600,MAP_FAR_MS:800,MAP_LONG_MS:1000,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
@@ -447,7 +447,7 @@ class LocationPanel extends HTMLElement{
       if(p){
         const selected=this.liveSelected===id,key=JSON.stringify([id,d.recording_generation,p.latitude,p.longitude]);
         if(!item.addr){item.addr=el('div','地址解析中…','lx-live-address');item.meta=el('div','','lx-muted lx-live-meta');item.meta.title='HA 实体更新时间（可能为恢复或属性更新），不是 GPS 实际采样时间';info.replaceChildren(name,item.addr,item.meta);item.status=null;}
-        const meta=this.liveTime(p.updated_at)+' · '+(p.accuracy==null?'精度未知':'精度 '+Math.round(p.accuracy)+' m');
+        const meta=this.liveTime(p.position_changed_at)+' · '+(p.accuracy==null?'精度未知':'精度 '+Math.round(p.accuracy)+' m');
         if(item.meta.textContent!==meta)item.meta.textContent=meta;
         if(row.dataset.focus!==id){row.dataset.focus=id;row.tabIndex=0;row.setAttribute('role','button');}
         if(row.getAttribute('aria-pressed')!==String(selected))row.setAttribute('aria-pressed',String(selected));
@@ -825,7 +825,7 @@ class LocationPanel extends HTMLElement{
     if(adjustView){if(this.selectedHistoryIndex==null)this.fitHistory();else if(xy[this.selectedHistoryIndex])map.setZoomAndCenter(17,xy[this.selectedHistoryIndex]);}
   }
   liveTime(t){
-    if(!t)return '更新时间未知';const d=new Date(t),now=new Date(),y=new Date(now);y.setDate(y.getDate()-1);
+    if(t==null)return '定位时间未知';const d=new Date(t),now=new Date(),y=new Date(now);y.setDate(y.getDate()-1);
     const time=d.toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
     const md=String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     const prefix=d.toDateString()===now.toDateString()?'':d.toDateString()===y.toDateString()?'昨日 ':d.getFullYear()===now.getFullYear()?md+' ':d.getFullYear()+'-'+md+' ';
