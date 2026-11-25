@@ -1,4 +1,4 @@
-const VERSION='0.1.38.1-preview';
+const VERSION='0.1.39-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -41,7 +41,7 @@ class LocationPanel extends HTMLElement{
     html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--primary-background-color,#131820);overscroll-behavior:none}luxe-location-probe{display:block;height:100vh;height:var(--lx-viewport,100dvh);width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--lx-host-bg,var(--primary-background-color,#131820));-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
     luxe-location-probe *{box-sizing:border-box}.lx-shell{height:100%;min-height:0;display:flex;flex-direction:column;gap:10px;padding:10px;overflow:hidden}
     .lx-head,.lx-tabs,.lx-row,.lx-title{display:flex;align-items:center;gap:10px}
-    .lx-head{flex:none;min-height:44px}.lx-menu{display:none}.lx-map-tools summary{list-style:none;cursor:pointer;padding:7px;display:flex}.lx-map-tools summary::-webkit-details-marker{display:none}.lx-map-tools details:not([open]) button{display:none}.lx-map-tools details button{display:block;width:100%}.lx-list-row[data-focus]{cursor:pointer}.lx-list-row[data-focus]:hover{background:var(--secondary-background-color,#293441)}.lx-marker{width:32px;height:32px;border:2px solid white;border-radius:50%;display:grid;place-items:center;color:white;font:bold 13px sans-serif;box-shadow:0 2px 8px #0006}.lx-marker-label{background:#182330;color:white;padding:3px 7px;border-radius:6px;white-space:nowrap;font:12px sans-serif;margin-top:3px;text-align:center}.lx-head h1{font-size:21px;margin:0;font-weight:650;flex:1}.lx-tabs{gap:4px;flex:none}
+    .lx-head{flex:none;min-height:44px}.lx-menu{display:none}.lx-map-tools summary{list-style:none;cursor:pointer;padding:7px;display:flex}.lx-map-tools summary::-webkit-details-marker{display:none}.lx-map-tools details:not([open]) button{display:none}.lx-map-tools details button{display:block;width:100%}.lx-list-row[data-focus]{cursor:pointer}.lx-list-row[data-focus]:hover{background:var(--secondary-background-color,#293441)}.lx-marker{width:32px;height:32px;border:2px solid white;border-radius:50%;display:grid;place-items:center;color:white;font:bold 13px sans-serif;box-shadow:0 2px 8px #0006}.lx-marker-label{background:#182330;color:white;padding:3px 7px;border-radius:6px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px sans-serif;margin-top:3px;text-align:center}.lx-head h1{font-size:21px;margin:0;font-weight:650;flex:1}.lx-tabs{gap:4px;flex:none}
     luxe-location-probe button{font:inherit;color:inherit;cursor:pointer;background:transparent;border:0;border-radius:9px;padding:8px 12px}
     luxe-location-probe button:focus-visible{outline:2px solid var(--lx-accent);outline-offset:1px}
     luxe-location-probe button:disabled{opacity:.5;cursor:default}
@@ -334,10 +334,10 @@ class LocationPanel extends HTMLElement{
       const outside=e=>{if(!(e.composedPath?.()||[]).includes(calendar)&&!calendar.contains(e.target))dismiss();};this.calendarDismiss=dismiss;
       let month=new Date(day.value+'T00:00:00');month.setDate(1);
       const updateLabel=()=>{trigger.replaceChildren(el('span','▦'),el('span',day.value+(day.value===maxDate?' · 今日':day.value===local(yesterday)?' · 昨日':'')),el('span','⌄','lx-date-arrow'));};
-      const choose=value=>{if(value<minDate||value>maxDate)return;const changed=day.value!==value;day.value=value;dismiss();updateLabel();trigger.focus();if(changed)this.loadHistory();};
+      const choose=value=>{if(value<minDate||value>maxDate)return;const changed=day.value!==value;day.value=value;dismiss();updateLabel();trigger.focus({preventScroll:true});if(changed)this.loadHistory();};
       const drawCalendar=()=>{
         popup.replaceChildren();const header=el('div',undefined,'lx-cal-header');
-        const prev=button('‹',()=>{month.setMonth(month.getMonth()-1);drawCalendar();}),next=button('›',()=>{month.setMonth(month.getMonth()+1);drawCalendar();});
+        const shiftMonth=delta=>{month.setMonth(month.getMonth()+delta);drawCalendar();const arrows=popup.querySelectorAll('.lx-cal-header button');const control=arrows[delta<0?0:1];if(control&&!control.disabled)control.focus();else if(arrows[delta<0?1:0]&&!arrows[delta<0?1:0].disabled)arrows[delta<0?1:0].focus();};const prev=button('‹',()=>shiftMonth(-1)),next=button('›',()=>shiftMonth(1));
         prev.setAttribute('aria-label','上个月');next.setAttribute('aria-label','下个月');
         prev.disabled=local(new Date(month.getFullYear(),month.getMonth(),0))<minDate;
         next.disabled=local(new Date(month.getFullYear(),month.getMonth()+1,1))>maxDate;
