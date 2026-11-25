@@ -17,7 +17,7 @@ from .location_store import Store, position
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "luxe_location_probe"
 PANEL = "luxe-location-probe"
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/config"})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/config",vol.Optional("renew_path"):str})
 @websocket_api.require_admin
 @callback
 def ws_config(hass, connection, msg):
@@ -28,8 +28,20 @@ def ws_config(hass, connection, msg):
     state = hass.data[DOMAIN]
     sessions = state.setdefault("proxy_sessions", {})
     now = time.monotonic()
+    renew=msg.get("renew_path","")
+    if renew:
+        prefix="/api/luxe_location/"
+        suffix="/_AMapService"
+        token=renew[len(prefix):-len(suffix)] if renew.startswith(prefix) and renew.endswith(suffix) else ""
+        session=sessions.get(token)
+        if not session or session["user"]!=connection.user.id or session["expires"]+86400<=now:
+            connection.send_error(msg["id"],"session_expired","Map session expired; reload panel")
+            return
+        session["expires"]=now+43200
+        connection.send_result(msg["id"],{"map_key":data["map_key"],"proxy_path":renew})
+        return
     for token in list(sessions):
-        if sessions[token]["expires"] <= now:
+        if sessions[token]["expires"]+86400 <= now:
             sessions.pop(token)
     if len(sessions) >= 64:
         sessions.pop(next(iter(sessions)))
@@ -318,7 +330,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_sessions"] = {}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.21-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.21.1-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)

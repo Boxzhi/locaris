@@ -1,5 +1,10 @@
-const VERSION='0.1.21-preview';
-let sdkPromise;
+const VERSION='0.1.21.1-preview';
+let sdkPromise,sdkSession,sdkConfigPromise;
+async function ensureSdkConfig(hass){
+  if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
+  if(!sdkConfigPromise)sdkConfigPromise=(async()=>{const old=sdkSession?.config;const config=await hass.callWS({type:NS+'config',...(old?{renew_path:old.proxy_path}:{})});if(old&&config.proxy_path!==old.proxy_path)throw new Error('地图会话已失效，请刷新位置中心');sdkSession={config,at:Date.now()};return config;})().finally(()=>{sdkConfigPromise=null;});
+  return sdkConfigPromise;
+}
 function sdk(config){
   if(sdkPromise)return sdkPromise;
   sdkPromise=new Promise((resolve,reject)=>{
@@ -160,7 +165,7 @@ class LocationPanel extends HTMLElement{
     if(!this._hass.user?.is_admin){this.status('仅管理员可访问');return;}
     if(this.page==='live'||this.page==='history')this.switchPage(this.page);
     else this.refresh();
-    if(this.isConnected&&epoch===this.epoch)this.timer=setInterval(()=>{if(!document.hidden)this.refresh();},15000);
+    if(this.isConnected&&epoch===this.epoch)this.timer=setInterval(()=>{if(!document.hidden){this.refresh();if(sdkSession&&(this.page==='live'||this.page==='history'))ensureSdkConfig(this._hass).catch(e=>{if(this.isConnected&&epoch===this.epoch)this.status(String(e.message||e));});}},15000);
   }
   status(s=''){const n=this.querySelector('.lx-error');if(n)n.textContent=s;}
   refresh(action='list',entity_id,delete_history=false){
@@ -170,7 +175,7 @@ class LocationPanel extends HTMLElement{
       this.refreshNeeded=true;
     }else{
       const key=JSON.stringify([action,entity_id,delete_history]);
-      if(this.refreshToken?.key===key||this.pendingActions.some(v=>v.key===key))return;
+      const last=this.pendingActions[this.pendingActions.length-1];if(last?.key===key||(!last&&this.refreshToken?.key===key))return;
       this.pendingActions.push({action,entity_id,delete_history,key});
     }
     this.drainRefresh();
@@ -183,9 +188,10 @@ class LocationPanel extends HTMLElement{
     const epoch=this.epoch,token={key:job.key},live=this.page==='live';
     this.refreshToken=token;this.busy=true;
     const current=()=>this.isConnected&&this.epoch===epoch&&this.refreshToken===token;
+    const active=()=>current()&&this._hass?.user?.is_admin;
     try{
       const r=await this._hass.callWS({type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live});
-      if(!current())return;
+      if(!active())return;
       if(live!==(this.page==='live')){this.refreshNeeded=true;return;}
       this.data=r;this.status();this.updateData();
     }catch(e){if(current()){this.status('操作失败：'+String(e.message||e));}}
@@ -287,7 +293,7 @@ class LocationPanel extends HTMLElement{
     }
   }
   async buildMap(target){
-    try{const A=await (sdkPromise||sdk(await this._hass.callWS({type:NS+'config'})));if(!this.isConnected||!target.isConnected)return;this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});if(this.page==='live'){this.map.on('zoomend',()=>this.clusterLive());this.map.on('moveend',()=>this.clusterLive());this.map.on('dragstart',()=>{this.cancelCamera();this.liveExpanded=null;});}this.layer(this.mapLayer||'standard');if(this.page==='live')this.syncMarkers();else this.paintHistory();}
+    try{const config=await ensureSdkConfig(this._hass),A=await sdk(config);if(!this.isConnected||!target.isConnected)return;this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});if(this.page==='live'){this.map.on('zoomend',()=>this.clusterLive());this.map.on('moveend',()=>this.clusterLive());this.map.on('dragstart',()=>{this.cancelCamera();this.liveExpanded=null;});}this.layer(this.mapLayer||'standard');if(this.page==='live')this.syncMarkers();else this.paintHistory();}
     catch(e){if(target.isConnected)this.status('地图加载失败：'+String(e.message||e));}
   }
   destroyMap(){this.cancelCamera();this.liveExpanded=null;this.liveClusters=[];this.historyOverlays=[];this.historyNumberMarkers=[];this.markers=new Map();this.didFit=false;if(this.map){this.map.destroy();this.map=null;}}
