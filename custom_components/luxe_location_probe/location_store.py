@@ -61,12 +61,21 @@ class Store:
         self.stop_lock = asyncio.Lock()
 
     def db(self, fn, *args):
-        with closing(sqlite3.connect(self.path, timeout=10)) as con:
-            con.row_factory = sqlite3.Row
-            con.execute("PRAGMA foreign_keys=ON")
-            con.execute("PRAGMA secure_delete=ON")
-            with con:
-                return fn(con, *args)
+        # Never silently create a replacement database after startup.
+        # A failed transaction is rolled back before the single BUSY retry.
+        for attempt in range(2):
+            try:
+                with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=3)) as con:
+                    con.row_factory = sqlite3.Row
+                    con.execute("PRAGMA foreign_keys=ON")
+                    con.execute("PRAGMA secure_delete=ON")
+                    with con:
+                        return fn(con, *args)
+            except sqlite3.OperationalError as err:
+                code = getattr(err, "sqlite_errorcode", None)
+                if attempt or code is None or (code & 255) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                    raise
+                time.sleep(0.2)
 
     async def run(self, fn, *args):
         return await self.hass.async_add_executor_job(self.db, fn, *args)
@@ -74,6 +83,8 @@ class Store:
     def initialize(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path, timeout=10)) as con:
+            if con.execute("PRAGMA quick_check(1)").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("Location database integrity check failed")
             con.execute("PRAGMA journal_mode=WAL")
             con.execute("PRAGMA foreign_keys=ON")
             con.execute("PRAGMA secure_delete=ON")
@@ -194,7 +205,7 @@ class Store:
             self.managed.discard(entity)
             self.excluded.add(entity)
             self.listen()
-            await self.hass.async_add_executor_job(self.checkpoint)
+            await self.checkpoint_safely()
 
     @callback
     def invalidate(self, entity):
@@ -308,7 +319,7 @@ class Store:
             self.invalidate(entity)
             self.devices.discard(entity)
             self.listen()
-            await self.hass.async_add_executor_job(self.checkpoint)
+            await self.checkpoint_safely()
 
     async def backfill(self, entity, generation):
         try:
@@ -369,8 +380,16 @@ class Store:
                 self.importing.pop(entity, None)
 
     def checkpoint(self):
-        with closing(sqlite3.connect(self.path, timeout=10)) as con:
-            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=3)) as con:
+            busy, _, _ = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if busy:
+                raise sqlite3.OperationalError("Location WAL checkpoint busy")
+
+    async def checkpoint_safely(self):
+        try:
+            await self.hass.async_add_executor_job(self.checkpoint)
+        except (sqlite3.Error, OSError):
+            _LOGGER.warning("Location WAL checkpoint deferred (no coordinates logged)")
 
     def checkpoint_if_needed(self):
         # A closed SQLite connection may already have checkpointed the WAL.
@@ -395,7 +414,10 @@ class Store:
 
     async def periodic(self, _now):
         if self.active:
-            await self.cleanup()
+            try:
+                await self.cleanup()
+            except (sqlite3.Error, OSError):
+                _LOGGER.warning("Location periodic cleanup failed (no coordinates logged)")
             if not self.active:
                 return
             for entity in sorted(self.devices):
@@ -437,7 +459,15 @@ class Store:
             if not self.active or not self.ready:
                 raise RuntimeError("Storage not ready")
             location_count, address_count = await self.run(read)
-            size = await self.hass.async_add_executor_job(lambda: sum(p.stat().st_size for p in self.path.parent.glob("location.db*") if p.is_file()))
+            def database_size():
+                total = 0
+                for name in (self.path.name, self.path.name+"-wal", self.path.name+"-shm"):
+                    try:
+                        total += self.path.with_name(name).stat().st_size
+                    except FileNotFoundError:
+                        continue
+                return total
+            size = await self.hass.async_add_executor_job(database_size)
         return {"retention_days":30,"database_bytes":size,"last_cleanup":self.last_cleanup,"location_count":location_count,"address_cache_count":address_count}
 
     async def stop(self):
@@ -456,7 +486,7 @@ class Store:
                 await asyncio.gather(*list(self.tasks), return_exceptions=True)
             async with self.lock:
                 if self.initialized:
-                    await self.hass.async_add_executor_job(self.checkpoint)
+                    await self.checkpoint_safely()
                     self.initialized = False
             self.importing.clear()
             self.last_valid.clear()

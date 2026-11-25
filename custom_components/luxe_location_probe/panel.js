@@ -1,4 +1,4 @@
-const VERSION='0.1.41-preview';
+const VERSION='0.1.42-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
