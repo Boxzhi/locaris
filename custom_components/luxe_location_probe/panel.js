@@ -1,4 +1,4 @@
-const VERSION='0.1.25-preview';
+const VERSION='0.1.25.1-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -32,7 +32,7 @@ class LocationPanel extends HTMLElement{
     const old=this._hass;this._hass=v;
     if(this.isConnected&&this.viewportResize&&(old?.themes!==v?.themes||old?.user!==v?.user))this.syncHostLayout();
     if(this.isConnected&&!this.started)this.start();
-    if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&d.enabled&&old.states[d.entity_id]!==v.states[d.entity_id]))this.liveDirty=true;
+    if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&d.enabled&&(old.states[d.entity_id]?.last_updated!==v.states[d.entity_id]?.last_updated||old.states[d.entity_id]?.state!==v.states[d.entity_id]?.state)))this.liveDirty=true;
   }
   connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
   disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.data=null;this.liveAddressCache?.clear();clearInterval(this.timer);this.timer=null;if(this.visibilityHandler){document.removeEventListener('visibilitychange',this.visibilityHandler);this.visibilityHandler=null;}this.liveListObserver?.disconnect();this.liveListObserver=null;this.stopViewport();this.closeHistoryCalendar();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
@@ -177,9 +177,9 @@ class LocationPanel extends HTMLElement{
     }
   }
   refreshMapSession(){
-    if(!sdkSession||(this.page!=='live'&&this.page!=='history'))return;
+    if(!sdkSession||Date.now()<(this.mapRenewRetryAt||0)||(this.page!=='live'&&this.page!=='history'))return;
     const epoch=this.epoch;
-    ensureSdkConfig(this._hass).catch(e=>{if(this.isConnected&&epoch===this.epoch)this.status(String(e.message||e));});
+    ensureSdkConfig(this._hass).catch(e=>{if(this.isConnected&&epoch===this.epoch){this.mapRenewRetryAt=Date.now()+60000;this.status(String(e.message||e));}});
   }
   refreshTick(now=Date.now()){
     if(document.hidden||!this.isConnected||!this.started)return;
@@ -214,7 +214,7 @@ class LocationPanel extends HTMLElement{
       const r=await this._hass.callWS({type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live,include_storage:settings});
       if(!active())return;
       if(live!==(this.page==='live')||settings!==(this.page==='settings')){this.refreshNeeded=true;return;}
-      this.data=r;this.pruneLiveAddresses();this.status();const signature=JSON.stringify([this.page,r,this.page==='live'?new Date().toDateString():null]);if(signature!==this.renderSignature){this.renderSignature=signature;this.updateData();}
+      this.data=r;this.pruneLiveAddresses();this.status();const signature=JSON.stringify([this.page,r,this.page==='live'?new Date().toDateString():null]);if(signature!==this.renderSignature){this.updateData();this.renderSignature=signature;}else if(live)this.retryLiveAddresses();
     }catch(e){if(current()){this.status('操作失败：'+String(e.message||e));}}
     finally{if(current()){this.refreshToken=null;this.drainRefresh();}}
   }
@@ -529,6 +529,13 @@ class LocationPanel extends HTMLElement{
     const prefix=d.toDateString()===now.toDateString()?'':d.toDateString()===y.toDateString()?'昨日 ':d.getFullYear()===now.getFullYear()?md+' ':d.getFullYear()+'-'+md+' ';
     return prefix+time;
   }
+  retryLiveAddresses(){
+    for(const row of this.querySelectorAll('.lx-live-row[data-focus]')){
+      const node=row.querySelector('.lx-live-address');
+      const d=this.data?.candidates.find(v=>v.entity_id===row.dataset.focus&&v.managed&&v.enabled&&v.position);
+      if(node&&d&&node._lxRetryAt&&Date.now()>=node._lxRetryAt){node._lxRetryAt=0;this.liveAddress(d,node,this.liveSelected===d.entity_id);}
+    }
+  }
   pruneLiveAddresses(){
     const valid=new Map((this.data?.candidates||[]).filter(d=>d.managed&&d.enabled).map(d=>[d.entity_id,d.recording_generation]));
     for(const [key,entry] of this.liveAddressCache||[]){if(!valid.has(entry.entity)||valid.get(entry.entity)!==entry.generation)this.liveAddressCache.delete(key);}
@@ -543,6 +550,7 @@ class LocationPanel extends HTMLElement{
     }
     const address=await entry.promise;
     if(target.isConnected&&this.page==='live'&&(this.liveAddressCache.get(key)===entry||(!address&&!this.liveAddressCache.has(key))))target.textContent=address?(full?address:address.replace(/^(?:[^省]{2,8}省|内蒙古自治区|广西壮族自治区|宁夏回族自治区|新疆维吾尔自治区|西藏自治区)/,'')):'地址暂不可用';
+    if(target.isConnected)target._lxRetryAt=address?0:Date.now()+30000;
     if(!address&&this.liveAddressCache.get(key)===entry)this.liveAddressCache.delete(key);
   }
   color(id){
