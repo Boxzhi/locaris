@@ -1,4 +1,4 @@
-const VERSION='0.1.56-preview';
+const VERSION='0.1.57-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
@@ -939,9 +939,8 @@ class LocationPanel extends HTMLElement{
       if(!d)card.append(el('p','正在读取存储信息…','lx-muted'));else for(const [name,value] of [['历史保留',String(d.retention_days)+' 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.location_count)],['最近清理',fmt(d.last_cleanup)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
       stack.append(this.drawRuntimePolicy(),card);
 
-      const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');layer.dataset.controlKey='map-layer';for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
       const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.dataset.controlKey='show-header';uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('luxe_location.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow);stack.prepend(ui);
-      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；地址按需通过高德解析，缓存于 HA 内存和 SQLite；地图安全代理使用短期会话路径。','lx-muted'));stack.append(about);
+      const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION));stack.append(about);
     }
     main.scrollTop=scroll;
     if(focused){const control=Array.from(main.querySelectorAll('[data-control-key]')).find(v=>v.dataset.controlKey===focused);control?.focus({preventScroll:true});}
