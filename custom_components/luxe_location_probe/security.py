@@ -1,6 +1,7 @@
 """Bounded inputs for location APIs (no Home Assistant dependency)."""
 import math
 import re
+from .const import MAP_PROXY_RATE_WINDOW_S
 
 def entity_id(value):
     if not isinstance(value, str) or len(value) > 255 or not re.fullmatch(r"device_tracker\.[a-z0-9_]+", value):
@@ -34,9 +35,9 @@ async def read_limited(content, limit):
 def reserve_proxy(runtime, session, now):
     """Single event-loop admission; no awaits between accounting and reservation."""
     times = session["times"]
-    times[:] = [t for t in times if now-t < 60]
+    times[:] = [t for t in times if now-t < MAP_PROXY_RATE_WINDOW_S]
     total = runtime["times"]
-    total[:] = [t for t in total if now-t < 60]
+    total[:] = [t for t in total if now-t < MAP_PROXY_RATE_WINDOW_S]
     if len(times) >= 120 or len(total) >= 600 or runtime["inflight"] >= 8:
         return False
     times.append(now)

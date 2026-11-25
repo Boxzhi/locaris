@@ -8,7 +8,10 @@ import time
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from .location_store import now_ms, WINDOW
+from .location_store import now_ms
+from .const import (WINDOW, HISTORY_QUERY_MAX_MS, ADDRESS_FAILURE_TTL_MS,
+    ADDRESS_REQUEST_INTERVAL_S, ADDRESS_REQUEST_TIMEOUT_S, MAP_SESSION_TTL_S,
+    MAP_SESSION_RENEW_GRACE_S, MAP_PROXY_TIMEOUT_S, MAP_PROXY_RETRY_AFTER_S)
 import voluptuous as vol
 from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
@@ -51,7 +54,7 @@ async def ws_config(hass, connection, msg):
         return
     now = time.monotonic()
     for token in list(sessions):
-        if sessions[token]["expires"]+86400 <= now:
+        if sessions[token]["expires"]+MAP_SESSION_RENEW_GRACE_S <= now:
             sessions.pop(token)
     renew=msg.get("renew_path","")
     if renew:
@@ -59,16 +62,16 @@ async def ws_config(hass, connection, msg):
         suffix="/_AMapService"
         token=renew[len(prefix):-len(suffix)] if renew.startswith(prefix) and renew.endswith(suffix) else ""
         session=sessions.get(token)
-        if not session or session["user"]!=connection.user.id or session["expires"]+86400<=now:
+        if not session or session["user"]!=connection.user.id or session["expires"]+MAP_SESSION_RENEW_GRACE_S<=now:
             connection.send_error(msg["id"],"session_expired","Map session expired; reload panel")
             return
-        session["expires"]=now+43200
+        session["expires"]=now+MAP_SESSION_TTL_S
         connection.send_result(msg["id"],{"map_key":data["map_key"],"proxy_path":renew})
         return
     if len(sessions) >= 64:
         sessions.pop(next(iter(sessions)))
     token = secrets.token_urlsafe(32)
-    sessions[token] = {"expires":now+43200,"times":[],"user":connection.user.id}
+    sessions[token] = {"expires":now+MAP_SESSION_TTL_S,"times":[],"user":connection.user.id}
     connection.send_result(msg["id"], {"map_key":data["map_key"],"proxy_path":"/api/luxe_location/"+token+"/_AMapService"})
 @websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove"]), vol.Optional("entity_id"): checked(security.entity_id), vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool, vol.Optional("include_storage", default=True): bool})
 @websocket_api.require_admin
@@ -142,7 +145,7 @@ async def ws_history(hass, connection, msg):
         return
     entity = msg["entity_id"]
     start, end = msg["start"], msg["end"]
-    if end <= start or end-start > 26*3600000:
+    if end <= start or end-start > HISTORY_QUERY_MAX_MS:
         connection.send_error(msg["id"], "invalid_range", "Select one day")
         return
     async with store.lock:
@@ -215,9 +218,9 @@ class MapProxy(HomeAssistantView):
         params = [(k,v) for k,v in request.query.items() if k.lower() not in ("key","jscode")]
         params.extend([("key",data["map_key"]),("jscode",data["security_code"])])
         if not security.reserve_proxy(runtime, session, time.monotonic()):
-            raise web.HTTPTooManyRequests(headers={"Retry-After":"5"})
+            raise web.HTTPTooManyRequests(headers={"Retry-After":str(MAP_PROXY_RETRY_AFTER_S)})
         try:
-            async with async_get_clientsession(hass).get(target,params=params,allow_redirects=False,timeout=15) as resp:
+            async with async_get_clientsession(hass).get(target,params=params,allow_redirects=False,timeout=MAP_PROXY_TIMEOUT_S) as resp:
                 if resp.status!=200:
                     return web.Response(status=502)
                 content_type = resp.content_type
@@ -322,7 +325,7 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
                 return
             now=now_ms()
             hit=cache.get(key)
-            if hit and now-hit[0]<(WINDOW if hit[1] else 30000):
+            if hit and now-hit[0]<(WINDOW if hit[1] else ADDRESS_FAILURE_TTL_MS):
                 connection.send_result(msg["id"],{"address":hit[1]})
                 return
             if hit:
@@ -337,7 +340,7 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
                 cache[key]=(hit[2],hit[1])
                 connection.send_result(msg["id"],{"address":hit[1]})
                 return
-        delay=max(0,1-(time.monotonic()-runtime.get("last_request",-1000)))
+        delay=max(0,ADDRESS_REQUEST_INTERVAL_S-(time.monotonic()-runtime.get("last_request",-1000)))
         if delay:
             await asyncio.sleep(delay)
         # Recheck authorization after rate-limit sleep, immediately before dispatch.
@@ -363,7 +366,7 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
         runtime["last_request"]=time.monotonic()
         address=None
         try:
-            async with async_get_clientsession(hass).get("https://restapi.amap.com/v3/geocode/regeo",params={"key":service_key,"location":f"{lon:.6f},{lat:.6f}","extensions":"base"},timeout=10,allow_redirects=False) as resp:
+            async with async_get_clientsession(hass).get("https://restapi.amap.com/v3/geocode/regeo",params={"key":service_key,"location":f"{lon:.6f},{lat:.6f}","extensions":"base"},timeout=ADDRESS_REQUEST_TIMEOUT_S,allow_redirects=False) as resp:
                 result=json.loads(await security.read_limited(resp.content, 65536)) if resp.status==200 else {}
                 if isinstance(result,dict) and result.get("status")=="1":
                     address=result.get("regeocode",{}).get("formatted_address")
@@ -422,7 +425,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.47-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.47.1-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)

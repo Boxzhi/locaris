@@ -9,11 +9,14 @@ import sqlite3
 import time
 
 from .history_logic import recorder_changes
+from .const import (WINDOW, HISTORY_RETENTION_DAYS, DAY_MS, DISCOVERY_INTERVAL_S,
+    BACKFILL_INTERVAL_S, BACKFILL_RETRY_S, BACKFILL_OVERLAP_MS, RECORDER_MIN_DELAY_MS,
+    RECORDER_DEFAULT_COMMIT_S, RECORDER_COMMIT_BUFFER_MS, RECORDER_BOUNDARY_MS,
+    WARNING_INTERVAL_S, SQLITE_START_TIMEOUT_S, SQLITE_BUSY_TIMEOUT_S, SQLITE_RETRY_DELAY_S)
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 _LOGGER = logging.getLogger(__name__)
-WINDOW = 30 * 86400 * 1000
 
 def now_ms():
     return int(time.time() * 1000)
@@ -73,7 +76,7 @@ class Store:
         # A failed transaction is rolled back before the single BUSY retry.
         for attempt in range(2):
             try:
-                with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=3)) as con:
+                with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=SQLITE_BUSY_TIMEOUT_S)) as con:
                     con.row_factory = sqlite3.Row
                     con.execute("PRAGMA foreign_keys=ON")
                     con.execute("PRAGMA secure_delete=ON")
@@ -83,14 +86,14 @@ class Store:
                 code = getattr(err, "sqlite_errorcode", None)
                 if attempt or code is None or (code & 255) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
                     raise
-                time.sleep(0.2)
+                time.sleep(SQLITE_RETRY_DELAY_S)
 
     async def run(self, fn, *args):
         return await self.hass.async_add_executor_job(self.db, fn, *args)
 
     def initialize(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(self.path, timeout=10)) as con:
+        with closing(sqlite3.connect(self.path, timeout=SQLITE_START_TIMEOUT_S)) as con:
             if con.execute("PRAGMA quick_check(1)").fetchone()[0] != "ok":
                 raise sqlite3.DatabaseError("Location database integrity check failed")
             con.execute("PRAGMA journal_mode=WAL")
@@ -140,8 +143,8 @@ class Store:
         await self.cleanup()
         self.ready = True
         self.listen()
-        self.timer = async_track_time_interval(self.hass, self.periodic, timedelta(hours=1))
-        self.discovery = async_track_time_interval(self.hass, self.scan_tick, timedelta(minutes=1))
+        self.timer = async_track_time_interval(self.hass, self.periodic, timedelta(seconds=BACKFILL_INTERVAL_S))
+        self.discovery = async_track_time_interval(self.hass, self.scan_tick, timedelta(seconds=DISCOVERY_INTERVAL_S))
         for entity in sorted(self.devices):
             self.schedule_backfill(entity)
 
@@ -182,7 +185,7 @@ class Store:
 
     def warn(self, message):
         now = time.monotonic()
-        if now - self.warning_times.get(message, -1000) >= 60:
+        if now - self.warning_times.get(message, -1000) >= WARNING_INTERVAL_S:
             self.warning_times[message] = now
             _LOGGER.warning(message)
 
@@ -419,7 +422,7 @@ class Store:
 
     def defer_backfill(self, entity, generation, recorded_at=None):
         if self.active and entity in self.devices and self.generations.get(entity, 0) == generation:
-            self.retry_import.setdefault(entity, time.monotonic() + 300)
+            self.retry_import.setdefault(entity, time.monotonic() + BACKFILL_RETRY_S)
             if recorded_at is not None:
                 self.recovery_from[entity] = min(recorded_at, self.recovery_from.get(entity, recorded_at))
 
@@ -438,10 +441,10 @@ class Store:
                 self.defer_backfill(entity, generation)
                 return
             # Respect long Recorder commit intervals before advancing the cursor.
-            delay = max(120000, int(getattr(recorder, "commit_interval", 5)*2000+30000))
+            delay = max(RECORDER_MIN_DELAY_MS, int(getattr(recorder, "commit_interval", RECORDER_DEFAULT_COMMIT_S)*2000+RECORDER_COMMIT_BUFFER_MS))
             end = now_ms() - delay
             recovery = self.recovery_from.get(entity)
-            start = max(earliest, min(cursor - 300000, recovery) if recovery is not None else cursor - 300000, now_ms() - WINDOW)
+            start = max(earliest, min(cursor - BACKFILL_OVERLAP_MS, recovery) if recovery is not None else cursor - BACKFILL_OVERLAP_MS, now_ms() - WINDOW)
             # Query with one millisecond of overlap at strict Recorder boundaries.
             # The explicit half-open filter below prevents synthetic or future rows.
             # Carry the last valid payload across windows, not across consent changes.
@@ -459,8 +462,8 @@ class Store:
                 if baseline is not None:
                     previous = tuple(baseline)
             while start < end and self.active and self.generations.get(entity, 0) == generation:
-                stop = min(start + 86400000, end)
-                begin_dt = datetime.fromtimestamp((start - 1) / 1000, timezone.utc)
+                stop = min(start + DAY_MS, end)
+                begin_dt = datetime.fromtimestamp((start - RECORDER_BOUNDARY_MS) / 1000, timezone.utc)
                 end_dt = datetime.fromtimestamp(stop / 1000, timezone.utc)
                 def read():
                     result = history.get_significant_states(self.hass, begin_dt, end_dt, [entity],
@@ -501,7 +504,7 @@ class Store:
             self.warn("Location probe Recorder import failed (no coordinates logged)")
 
     def checkpoint(self):
-        with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=3)) as con:
+        with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=SQLITE_BUSY_TIMEOUT_S)) as con:
             busy, _, _ = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
             if busy:
                 raise sqlite3.OperationalError("Location WAL checkpoint busy")
@@ -595,7 +598,7 @@ class Store:
                         continue
                 return total
             size = await self.hass.async_add_executor_job(database_size)
-        return {"retention_days":30,"database_bytes":size,"last_cleanup":self.last_cleanup,"location_count":location_count,"address_cache_count":address_count}
+        return {"retention_days":HISTORY_RETENTION_DAYS,"database_bytes":size,"last_cleanup":self.last_cleanup,"location_count":location_count,"address_cache_count":address_count}
 
     async def stop(self):
         async with self.stop_lock:

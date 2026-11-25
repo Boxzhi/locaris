@@ -3,8 +3,13 @@ import asyncio
 import importlib.util
 from pathlib import Path
 import unittest
+import sys
+import types
 
-spec = importlib.util.spec_from_file_location("luxe_security", Path(__file__).resolve().parents[1] / "custom_components/luxe_location_probe/security.py")
+package = types.ModuleType("luxe_security_test")
+package.__path__ = [str(Path(__file__).resolve().parents[1] / "custom_components/luxe_location_probe")]
+sys.modules[package.__name__] = package
+spec = importlib.util.spec_from_file_location("luxe_security_test.security", Path(package.__path__[0]) / "security.py")
 security = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(security)
 
