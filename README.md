@@ -95,7 +95,7 @@ Home Assistant 独立位置中心。当前版本 v0.1.0-preview（第一阶段�
 第五阶段：WebSocket 输入及管理员权限复核，地图代理并发/频率/响应限制，SQLite 临时锁重试与完整性保护，地址与写入任务上限，Recorder 导入并发及恢复，断线后的只读同步，地图会话失效提示。保留原数据库结构、30 天保留期和被动定位约束。过载写入依赖 Recorder 尽可能恢复；待恢复时间点仅保存在内存。需实机验收 HA 权限变更、Recorder 故障恢复、高德 SDK 兼容性及长期运行资源。自动化测试：`python -m unittest discover -s tests -p 'test_*.py'`。
 
 
-## v0.1.49.1-preview · 运行策略
+## v0.1.50-preview · 运行策略
 
 位置中心 → 设置 → 运行策略（管理员）：
 
