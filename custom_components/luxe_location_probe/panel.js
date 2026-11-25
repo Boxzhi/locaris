@@ -1,4 +1,4 @@
-const VERSION='0.1.26-preview';
+const VERSION='0.1.27-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -330,7 +330,7 @@ class LocationPanel extends HTMLElement{
   }
   destroyMap(){
     this.mapBuild=null;this.cancelCamera();if(this.clusterFrame!=null){cancelAnimationFrame(this.clusterFrame);this.clusterFrame=null;}
-    this.liveExpanded=null;this.liveClusters=[];this.historyOverlays=[];this.historyNumberMarkers=[];this.markers=new Map();this.didFit=false;
+    this.liveExpanded=null;this.liveClusters=[];this.clusterSignature=null;this.historyOverlays=[];this.historyNumberMarkers=[];this.historyTrackData=null;this.historyTrackOverlays=null;this.historyXY=null;this.historyMarkerMap=null;this.appliedLayer=null;this.markers=new Map();this.didFit=false;
     const map=this.map,listeners=this.mapListeners||[];this.map=null;this.mapListeners=[];
     if(map){for(const [name,cb] of listeners){try{map.off(name,cb);}catch(e){}}try{map.destroy();}catch(e){}}
   }
@@ -395,15 +395,28 @@ class LocationPanel extends HTMLElement{
     return 12742000*Math.asin(Math.sqrt(Math.min(1,Math.max(0,h))));
   }
   historyGroups(points){
-    const groups=[];let group=null;
+    const groups=[];let group=null,unique=null,counts=null,west=0,east=0,south=0,north=0;
+    const rad=Math.PI/180;
     for(let i=0;i<points.length;i++){
-      const p=points[i],addr=this.historyResolved?.get(p.recorded_at);
-      const exact=(a,b)=>a.latitude===b.latitude&&a.longitude===b.longitude;
-      const canJoin=group&&group.every(j=>{
-        const q=points[j],other=this.historyResolved?.get(q.recorded_at);
-        return exact(p,q)||(addr&&other===addr&&this.historyDistance(p,q)<=30);
-      });
-      if(canJoin)group.push(i);else{group=[i];groups.push(group);}
+      const p=points[i],addr=this.historyResolved?.get(p.recorded_at),key=p.latitude+','+p.longitude;
+      let same=unique?.get(key),join=false;
+      if(group){
+        const otherCount=group.length-(same?.count||0);
+        if(!otherCount)join=true;
+        else if(addr&&((counts.get(addr)||0)-(same?.addresses.get(addr)||0)===otherCount)){
+          // A conservative spherical upper bound avoids pairwise work for compact groups.
+          const dlat=Math.max(Math.abs(p.latitude-south),Math.abs(p.latitude-north))*rad;
+          const dlon=Math.max(Math.abs(p.longitude-west),Math.abs(p.longitude-east))*rad;
+          const nearEquator=south<=0&&north>=0?0:Math.min(Math.abs(south),Math.abs(north));
+          const h=Math.sin(Math.min(Math.PI,dlat)/2)**2+Math.cos(p.latitude*rad)*Math.cos(nearEquator*rad)*Math.sin(Math.min(Math.PI,dlon)/2)**2;
+          join=12742000*Math.asin(Math.sqrt(Math.min(1,Math.max(0,h))))<29.99999;
+          if(!join){join=true;for(const [k,q] of unique){if(k!==key&&this.historyDistance(p,q.point)>30){join=false;break;}}}
+        }
+      }
+      if(!join){group=[];groups.push(group);unique=new Map();counts=new Map();west=east=p.longitude;south=north=p.latitude;same=null;}
+      group.push(i);
+      if(!same){same={point:p,count:0,addresses:new Map()};unique.set(key,same);west=Math.min(west,p.longitude);east=Math.max(east,p.longitude);south=Math.min(south,p.latitude);north=Math.max(north,p.latitude);}
+      same.count++;same.addresses.set(addr,(same.addresses.get(addr)||0)+1);counts.set(addr,(counts.get(addr)||0)+1);
     }
     return groups;
   }
@@ -498,32 +511,53 @@ class LocationPanel extends HTMLElement{
   }
   paintHistory(adjustView=true){
     if(!this.map||this.page!=='history')return;
-    if(this.historyOverlays?.length)this.map.remove(this.historyOverlays);
-    this.historyOverlays=[];this.historyNumberMarkers=[];const points=this.historyData||[];if(!points.length)return;
-    const A=this.A,xy=points.map(p=>this.gcj(p.longitude,p.latitude));
-    let run=[xy[0]],dashed=null;
-    const flush=()=>{if(run.length>1)this.historyOverlays.push(new A.Polyline({path:run,strokeColor:'#4387e8',strokeWeight:dashed?3:4,strokeOpacity:dashed ? 0.55 : 0.9,strokeStyle:dashed?'dashed':'solid',strokeDasharray:[8,6],lineJoin:'round',lineCap:'round',zIndex:10}));};
-    for(let i=1;i<points.length;i++){
-      const gap=points[i].recorded_at-points[i-1].recorded_at>30*60000;
-      if(dashed!==null&&gap!==dashed){flush();run=[xy[i-1]];}
-      dashed=gap;run.push(xy[i]);
-    }flush();
-    const groups=new Map();
+    const map=this.map,A=this.A,points=this.historyData||[],seq=this.historySeq;
+    if(this.historyTrackData!==this.historyData||!this.historyTrackOverlays){
+      if(this.historyOverlays?.length)map.remove(this.historyOverlays);
+      this.historyOverlays=[];this.historyNumberMarkers=[];this.historyMarkerMap=new Map();this.historyTrackOverlays=[];this.historyTrackData=this.historyData;
+      this.historyXY=points.map(p=>this.gcj(p.longitude,p.latitude));
+      const xy=this.historyXY;
+      if(points.length){
+        let run=[xy[0]],dashed=null;
+        const flush=()=>{if(run.length>1)this.historyTrackOverlays.push(new A.Polyline({path:run,strokeColor:'#4387e8',strokeWeight:dashed?3:4,strokeOpacity:dashed?0.55:0.9,strokeStyle:dashed?'dashed':'solid',strokeDasharray:[8,6],lineJoin:'round',lineCap:'round',zIndex:10}));};
+        for(let i=1;i<points.length;i++){
+          const gap=points[i].recorded_at-points[i-1].recorded_at>30*60000;
+          if(dashed!==null&&gap!==dashed){flush();run=[xy[i-1]];}
+          dashed=gap;run.push(xy[i]);
+        }flush();
+        if(this.historyTrackOverlays.length)map.add(this.historyTrackOverlays);
+      }
+    }
+    if(!points.length)return;
+    const xy=this.historyXY,groups=new Map(),previous=this.historyMarkerMap||new Map(),next=new Map(),added=[];
     for(const indices of this.historyTimelineGroups||this.historyGroups(points)){
       const i=indices[0],key=points[i].latitude+','+points[i].longitude;
       if(!groups.has(key))groups.set(key,[]);groups.get(key).push(...indices);
     }
-    const map=this.map,seq=this.historySeq;const focus=i=>{if(this.map===map&&this.historySeq===seq&&this.page==='history')this.openHistoryPoint?.(i);};
-    for(const indices of groups.values()){
+    for(const [key,indices] of groups){
       const i=indices[0],isFirst=indices.includes(0),isLast=indices.includes(points.length-1);
-      const label=this.historyLabel(indices);
-      const dot=el('div',label,'lx-track-end lx-track-number');
-      dot.style.background=isFirst&&isLast?'#64748b':isFirst?'#059669':isLast?'#dc5252':'#4387e8';
-      const marker=new A.Marker({position:xy[i],content:dot,anchor:'center',title:'定位点 '+indices.map(n=>n+1).join('、'),zIndex:120});
-      marker.on('click',()=>{const selected=this.selectedHistoryIndex,pos=indices.indexOf(selected);focus(indices[(pos+1)%indices.length]);});
-      this.historyNumberMarkers.push({marker,dot,indices,label});this.historyOverlays.push(marker);
+      const label=this.historyLabel(indices),background=isFirst&&isLast?'#64748b':isFirst?'#059669':isLast?'#dc5252':'#4387e8';
+      let item=previous.get(key);
+      if(!item){
+        const dot=el('div',label,'lx-track-end lx-track-number');dot.style.background=background;
+        const marker=new A.Marker({position:xy[i],content:dot,anchor:'center',title:'定位点 '+label,zIndex:120});
+        item={marker,dot,indices,label,background};
+        marker.on('click',()=>{if(this.map!==map||this.historySeq!==seq||this.page!=='history'||this.historyMarkerMap?.get(key)!==item)return;const selected=this.selectedHistoryIndex,pos=item.indices.indexOf(selected);this.openHistoryPoint?.(item.indices[(pos+1)%item.indices.length]);});
+        added.push(marker);
+      }else{
+        if(item.label!==label){item.dot.textContent=label;item.marker.setTitle?.('定位点 '+label);}
+        if(item.background!==background)item.dot.style.background=background;
+        item.indices=indices;item.label=label;item.background=background;
+      }
+      next.set(key,item);
     }
-    this.map.add(this.historyOverlays);this.selectHistoryMarker(this.selectedHistoryIndex??null);if(adjustView){if(this.selectedHistoryIndex==null)this.fitHistory();else this.map.setZoomAndCenter(17,xy[this.selectedHistoryIndex]);}
+    const removed=[...previous].filter(([key])=>!next.has(key)).map(([,item])=>item.marker);
+    if(removed.length)map.remove(removed);
+    this.historyMarkerMap=next;this.historyNumberMarkers=[...next.values()];
+    if(added.length)map.add(added);
+    this.historyOverlays=[...this.historyTrackOverlays,...this.historyNumberMarkers.map(item=>item.marker)];
+    this.selectHistoryMarker(this.selectedHistoryIndex??null);
+    if(adjustView){if(this.selectedHistoryIndex==null)this.fitHistory();else if(xy[this.selectedHistoryIndex])map.setZoomAndCenter(17,xy[this.selectedHistoryIndex]);}
   }
   liveTime(t){
     if(!t)return '更新时间未知';const d=new Date(t),now=new Date(),y=new Date(now);y.setDate(y.getDate()-1);
@@ -578,7 +612,7 @@ class LocationPanel extends HTMLElement{
     const A=this.A,map=this.map,devices=(this.data?.candidates||[]).filter(d=>d.managed&&d.enabled&&d.position);
     if(!this.markers)this.markers=new Map();
     const ids=new Set(devices.map(d=>d.entity_id));if(this.liveExpanded&&[...this.liveExpanded].some(id=>!ids.has(id))){this.liveExpanded=null;this.cancelCamera();}if(this.cameraMoving&&[...this.markers.keys()].some(id=>!ids.has(id)))this.cancelCamera();
-    for(const [id,m] of this.markers)if(!ids.has(id)){map.remove([m.marker,...(m.circle?[m.circle]:[])]);this.markers.delete(id);}
+    for(const [id,m] of this.markers)if(!ids.has(id)){map.remove([m.marker,...(m.circle?[m.circle]:[])]);this.markers.delete(id);this.clusterSignature=null;}
     for(const d of devices){
       const p=d.position,xy=this.gcj(p.longitude,p.latitude),color=this.color(d.entity_id);
       let m=this.markers.get(d.entity_id);
@@ -586,13 +620,14 @@ class LocationPanel extends HTMLElement{
         const content=el('div'),dot=el('div',Array.from(d.name)[0]||'•','lx-marker');dot.style.background=color;
         const label=el('div',d.name,'lx-marker-label');content.append(dot,label);
         const marker=new A.Marker({position:xy,content,anchor:'center',offset:new A.Pixel(0,0),title:d.name});
-        marker.on('click',()=>{if(this.map===map&&this.markers.get(d.entity_id)?.marker===marker){this.focusDevice(d.entity_id);this.drawSide();}});map.add(marker);m={marker,circle:null,xy,dot,label,name:d.name};this.markers.set(d.entity_id,m);
+        marker.on('click',()=>{if(this.map===map&&this.markers.get(d.entity_id)?.marker===marker){this.focusDevice(d.entity_id);this.drawSide();}});map.add(marker);m={marker,circle:null,xy,dot,label,name:d.name};this.markers.set(d.entity_id,m);this.clusterSignature=null;
       }
-      if(m.name!==d.name){m.name=d.name;m.dot.textContent=Array.from(d.name)[0]||'•';m.label.textContent=d.name;m.marker.setTitle?.(d.name);}m.xy=xy;m.marker.setPosition(xy);
+      if(m.name!==d.name){m.name=d.name;m.dot.textContent=Array.from(d.name)[0]||'•';m.label.textContent=d.name;m.marker.setTitle?.(d.name);}const moved=m.xy[0]!==xy[0]||m.xy[1]!==xy[1];if(moved){m.xy=xy;m.marker.setPosition(xy);}
       if(Number.isFinite(p.accuracy)&&p.accuracy>0){
-        if(!m.circle){m.circle=new A.Circle({center:xy,radius:p.accuracy,strokeColor:color,strokeOpacity:.65,strokeWeight:1,fillColor:color,fillOpacity:.12,zIndex:5});map.add(m.circle);}
-        else{m.circle.setCenter(xy);m.circle.setRadius(p.accuracy);}
-      }else if(m.circle){map.remove(m.circle);m.circle=null;}
+        if(!m.circle){m.circle=new A.Circle({center:xy,radius:p.accuracy,strokeColor:color,strokeOpacity:.65,strokeWeight:1,fillColor:color,fillOpacity:.12,zIndex:5});map.add(m.circle);this.clusterSignature=null;}
+        else{if(moved)m.circle.setCenter(xy);if(m.accuracy!==p.accuracy)m.circle.setRadius(p.accuracy);}
+      }else if(m.circle){map.remove(m.circle);m.circle=null;this.clusterSignature=null;}
+      m.accuracy=p.accuracy;
     }
     if(!this.didFit&&this.markers.size){this.didFit=true;this.fitMarkers();}this.clusterLive();
   }
@@ -634,17 +669,19 @@ class LocationPanel extends HTMLElement{
   clusterLive(){
     if(!this.map||this.page!=='live'||!this.markers||this.cameraMoving)return;
     const map=this.map,A=this.A;
-    if(this.liveClusters?.length)map.remove(this.liveClusters);
-    this.liveClusters=[];
     const groups=[];
     for(const [id,m] of this.markers){
-      m.marker.setOffset?.(new A.Pixel(0,0));m.marker.show();if(m.circle)m.circle.show();
       let px;try{px=map.lngLatToContainer(new A.LngLat(m.xy[0],m.xy[1]));}catch(e){continue;}
       if(!px||!Number.isFinite(px.x)||!Number.isFinite(px.y))continue;
       const item={id,m,x:px.x,y:px.y};
       const group=groups.find(g=>g.every(v=>Math.hypot(v.x-item.x,v.y-item.y)<52));
       if(group)group.push(item);else groups.push([item]);
     }
+    const zoom=map.getZoom(),signature=JSON.stringify([this.liveSelected,[...(this.liveExpanded||[])],zoom,groups.map(g=>g.map(v=>[v.id,v.m.xy[0],v.m.xy[1],!!v.m.circle,...(this.liveExpanded&&zoom>=17.9?[Math.round(v.x*10),Math.round(v.y*10)]:[])]))]);
+    if(signature===this.clusterSignature)return;
+    this.clusterSignature=null;
+    if(this.liveClusters?.length)map.remove(this.liveClusters);this.liveClusters=[];
+    for(const m of this.markers.values()){m.marker.setOffset?.(new A.Pixel(0,0));m.marker.show();if(m.circle)m.circle.show();}
     for(const group of groups){
       if(group.length<2)continue;
       if(this.liveExpanded&&group.every(v=>this.liveExpanded.has(v.id))&&map.getZoom()>=17.9){
@@ -666,11 +703,11 @@ class LocationPanel extends HTMLElement{
       const marker=new A.Marker({position:center,content,anchor:'center',zIndex:130});
       marker.on('click',()=>{if(this.map===map&&this.liveClusters.includes(marker))this.expandLiveCluster(group,center);});this.liveClusters.push(marker);
     }
-    if(this.liveClusters.length)map.add(this.liveClusters);
+    if(this.liveClusters.length)map.add(this.liveClusters);this.clusterSignature=signature;
   }
   fitMarkers(){this.cancelCamera();this.liveExpanded=null;if(!this.map||!this.markers?.size)return;const list=[...this.markers.values()];if(list.length===1){this.map.setZoomAndCenter(16,list[0].xy);return;}this.map.setFitView(list.map(x=>x.marker),false,[60,60,60,60],16);}
   focusDevice(id){const m=this.markers?.get(id);if(m&&this.map){this.liveSelected=id;this.liveExpanded=null;this.flyTo(m.xy,16);this.clusterLive();}}
-  layer(id){this.mapLayer=id;for(const b of this.querySelectorAll('[data-layer]'))b.setAttribute('aria-pressed',String(b.dataset.layer===id));if(!this.map)return;const A=this.A;if(id==='satellite'){this.map.setMapStyle('amap://styles/normal');this.map.setLayers([new A.TileLayer.Satellite(),new A.TileLayer.RoadNet()]);}else{this.map.setLayers([new A.TileLayer()]);this.map.setMapStyle(id==='dark'?'amap://styles/dark':'amap://styles/normal');}}
+  layer(id){this.mapLayer=id;for(const b of this.querySelectorAll('[data-layer]'))b.setAttribute('aria-pressed',String(b.dataset.layer===id));if(!this.map||this.appliedLayer===id)return;const A=this.A;if(id==='satellite'){this.map.setMapStyle('amap://styles/normal');this.map.setLayers([new A.TileLayer.Satellite(),new A.TileLayer.RoadNet()]);}else{if(!this.appliedLayer||this.appliedLayer==='satellite')this.map.setLayers([new A.TileLayer()]);this.map.setMapStyle(id==='dark'?'amap://styles/dark':'amap://styles/normal');}this.appliedLayer=id;}
   drawData(){
     const main=this.querySelector('.lx-content');main.replaceChildren();main.append(this.menuButton());const data=this.data;
     if(!data){main.append(el('div','正在读取设备及存储信息…','lx-card'));return;}
