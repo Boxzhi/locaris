@@ -11,8 +11,8 @@
   ],
   "iot_class": "cloud_polling",
   "requirements": [],
-  "documentation": "https://github.com/Boxzhi/luxe_location",
-  "issue_tracker": "https://github.com/Boxzhi/luxe_location/issues",
+  "documentation": "https://github.com/Boxzhi/locaris",
+  "issue_tracker": "https://github.com/Boxzhi/locaris/issues",
   "codeowners": [
     "@Boxzhi"
   ]

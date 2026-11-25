@@ -10,9 +10,13 @@ Home Assistant 独立位置中心。实时位置、历史轨迹、设备管理�
 
 详见 [MIGRATION.md](MIGRATION.md)。卸载旧集成后重新添加 Locaris，首次启动安全复制旧 SQLite 数据库至 /config/locaris/location.db，保留旧库作为手动回退备份，不直接编辑 HA 内部配置。
 
+## 安装验收
+
+下载 [迁移候选分支 ZIP](https://github.com/Boxzhi/locaris/archive/refs/heads/locaris-migration.zip)，按照迁移文档备份并卸载旧集成后，将其中 `custom_components/locaris/` 完整复制至 HA 配置目录，再重启并添加 Locaris。此分支尚不作为 HACS 常规更新使用。
+
 ## 品牌资源
 
-assets/ 保存确认的北极星 SVG。发布前执行 `python scripts/build_brand.py`（开发环境需 CairoSVG），并提交生成的 brand/ PNG。当前候选分支不包含生成的 PNG，验收安装需要将品牌文件复制至 custom_components/locaris/brand/。
+assets/ 保存北极星 SVG，custom_components/locaris/brand/ 已包含八张经过自动化尺寸及透明通道检查的 PNG，无需额外安装或生成。开发者可执行 `python scripts/build_brand.py` 重新构建。
 
 ## 测试
 

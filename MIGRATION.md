@@ -19,7 +19,7 @@
 
 1. 创建完整 HA 备份，保存原有三项高德密钥。停止旧集成写入后备份整个 /config/luxe_location/ 目录，含可能存在的 WAL/SHM；不要将密钥或数据库上传到 GitHub。
 2. 在 HA 集成页面移除旧配置项，卸载旧 HACS 集成代码，重启 HA。确认旧集成未运行。不要删除旧数据目录。
-3. 下载 locaris-migration 分支，复制 custom_components/locaris/ 至 HA 的 /config/custom_components/locaris/。将已经确认的八个 PNG 品牌文件放在 brand/ 子目录；若从源码生成，则在开发环境安装 CairoSVG 并执行 python scripts/build_brand.py 后再复制。不要在 HA 运行时安装额外绘图库。
+3. 下载 [locaris-migration 分支 ZIP](https://github.com/Boxzhi/locaris/archive/refs/heads/locaris-migration.zip)，完整复制 custom_components/locaris/ 至 HA 的 /config/custom_components/locaris/，包含 brand/ 下八张 PNG。无需生成图片或安装绘图库。
 4. 重启 HA，添加 Locaris，重新填写高德三个密钥。首次初始化自动复制旧数据库。
 5. 确认新目录数据库存在、历史点及设备/排除状态、地址缓存、运行策略正常。注意启动后正常清理会删除超期数据、Recorder 补查也可能产生新数据，记录数不必始终完全相等。
 6. 验证重启不重复导入、不覆盖新数据；确认实时、历史地图以及 HA App 深色地图正常。
@@ -31,6 +31,6 @@
 
 ## 发布状态
 
-- 迁移分支独立，GitHub 仓库尚未更名，main 未更新。
-- SVG 与开发期 PNG 构建脚本已提交；实际 PNG 二进制尚未提交，测试安装需复制 brand/。
+- GitHub 仓库已更名为 Boxzhi/locaris，迁移分支独立，main 保持原版本。
+- SVG、PNG 构建脚本及八张品牌 PNG 均已提交；[首次自动化检查](https://github.com/Boxzhi/locaris/actions/runs/45571385006) 已通过。
 - 测试：python -m unittest discover -s tests -p 'test_*.py'。迁移独立测试覆盖 WAL、全新安装、重复迁移、损坏库、不完整 schema、外键异常、残留 sidecar、空目标、超时及竞争发布。尚未完成真实 HA/HACS 回归。
