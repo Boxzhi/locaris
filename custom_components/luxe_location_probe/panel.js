@@ -1,4 +1,4 @@
-const VERSION='0.1.38-preview';
+const VERSION='0.1.38.1-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -56,7 +56,7 @@ class LocationPanel extends HTMLElement{
     .lx-side{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto}.lx-map{position:relative;isolation:isolate;overflow:hidden;border-radius:14px;min-height:0;background:var(--lx-card)}
     .lx-track-end{width:30px;height:30px;border:2px solid white;border-radius:50%;display:grid;place-items:center;color:white;font:bold 12px sans-serif;box-shadow:0 2px 6px #0005}.lx-map-inner{position:absolute;inset:0;touch-action:none}.lx-map-tools{position:absolute;right:10px;top:10px;z-index:5;display:flex;flex-direction:column;gap:4px;background:var(--lx-card);border-radius:10px;padding:4px;box-shadow:0 2px 12px #0002}
     .lx-map-tools button{padding:7px;font-size:12px}.lx-map-tools button[aria-pressed=true]{color:var(--lx-accent)}
-    .lx-error{color:var(--error-color,#e7a23b);font-size:13px;flex:none;display:flex;align-items:center;gap:8px;overflow-wrap:anywhere}.lx-error[hidden]{display:none!important}.lx-error>span{min-width:0;flex:1}.lx-error button,.lx-state button,.lx-map-state button{color:var(--lx-accent);flex:none;padding:6px 10px}.lx-state{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px;min-height:52px;padding:10px;text-align:center}.lx-map-state{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:22px;text-align:center;background:var(--lx-card);color:var(--primary-text-color,#e7eaf0)}.lx-map-state[hidden]{display:none!important}.lx-map-state>span{max-width:100%;overflow-wrap:anywhere}.lx-map-state button{background:var(--secondary-background-color,#293441)}.lx-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.lx-stack{display:flex;flex-direction:column;gap:10px;max-width:1000px;margin:auto}
+    .lx-error{color:var(--error-color,#e7a23b);font-size:13px;flex:none;display:flex;align-items:center;gap:8px;overflow-wrap:anywhere}.lx-error[hidden]{display:none!important}.lx-error>span{min-width:0;flex:1;max-height:72px;overflow:auto}.lx-error button,.lx-state button,.lx-map-state button{color:var(--lx-accent);flex:none;padding:6px 10px}.lx-state{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px;min-height:52px;padding:10px;text-align:center}.lx-map-state{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:22px;text-align:center;background:var(--lx-card);color:var(--primary-text-color,#e7eaf0)}.lx-map-state[hidden]{display:none!important}.lx-map-state>span{max-width:100%;overflow-wrap:anywhere}.lx-map-state button{background:var(--secondary-background-color,#293441)}.lx-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.lx-stack{display:flex;flex-direction:column;gap:10px;max-width:1000px;margin:auto}
     .lx-device-head{display:flex;align-items:center;gap:10px}.lx-avatar{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--secondary-background-color,#293441);color:var(--lx-accent);flex:none}.lx-name{flex:1;min-width:0;overflow-wrap:anywhere}
     .lx-switch{display:flex;align-items:center;gap:8px;cursor:pointer}.lx-switch input{flex:none;appearance:none;-webkit-appearance:none;width:42px;height:24px;border-radius:20px;background:#78838e;position:relative;cursor:pointer;margin:0}.lx-switch input:checked{background:var(--lx-accent)}.lx-switch input:focus-visible,.lx-field:focus-visible,.lx-more summary:focus-visible,.lx-map-tools summary:focus-visible,.lx-live-row[data-focus]:focus-visible{outline:2px solid var(--lx-accent);outline-offset:2px}.lx-row>strong{text-align:right;overflow-wrap:anywhere;min-width:0}.lx-switch input:before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;background:white;border-radius:50%;transition:transform .15s}.lx-switch input:checked:before{transform:translateX(18px)}
     .lx-more{position:relative}.lx-more summary{cursor:pointer;list-style:none;padding:8px}.lx-more summary::-webkit-details-marker{display:none}.lx-more-panel{position:absolute;right:0;top:100%;z-index:10;min-width:180px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:10px;padding:5px;box-shadow:0 6px 20px #0003}.lx-more-panel button{display:block;width:100%;text-align:left;white-space:nowrap}.lx-more-panel .lx-danger{color:var(--error-color,#db5454)}.lx-row>button{flex:none}
@@ -181,8 +181,11 @@ class LocationPanel extends HTMLElement{
   }
   refreshMapSession(){
     if(!sdkSession||Date.now()<(this.mapRenewRetryAt||0)||(this.page!=='live'&&this.page!=='history'))return;
-    const epoch=this.epoch;
-    ensureSdkConfig(this._hass).catch(e=>{if(this.isConnected&&epoch===this.epoch){this.mapRenewRetryAt=Date.now()+60000;const target=this.querySelector('.lx-map-inner');if(target)this.mapStatus(target,'地图会话暂不可用',()=>this.retryMap(target));}});
+    const epoch=this.epoch,target=this.querySelector('.lx-map-inner'),map=this.map;
+    if(!target||!map||this.mapRenewPending)return;
+    const token={};this.mapRenewPending=token;
+    const current=()=>this.isConnected&&epoch===this.epoch&&this.map===map&&target.isConnected&&this.mapRenewPending===token;
+    ensureSdkConfig(this._hass).then(()=>{if(current()&&this.mapSessionError){this.mapSessionError=false;this.mapStatus(target);}}).catch(()=>{if(current()){this.mapRenewRetryAt=Date.now()+60000;this.mapSessionError=true;this.mapStatus(target,'地图会话暂不可用',()=>this.retryMap(target));}}).finally(()=>{if(this.mapRenewPending===token)this.mapRenewPending=null;});
   }
   refreshTick(now=Date.now()){
     if(document.hidden||!this.isConnected||!this.started)return;
@@ -220,7 +223,7 @@ class LocationPanel extends HTMLElement{
       if(!active())return;
       if(live!==(this.page==='live')||settings!==(this.page==='settings')){this.refreshNeeded=true;return;}
       this.data=r;this.dataError='';this.pruneLiveAddresses();this.status();const signature=JSON.stringify([this.page,r,this.page==='live'?new Date().toDateString():null]);if(signature!==this.renderSignature){this.updateData();this.renderSignature=signature;}else if(live)this.retryLiveAddresses();
-    }catch(e){if(current()){this.dataError=job.action==='list'?'数据读取失败':'操作失败';this.status(this.dataError+'：'+String(e.message||e),()=>this.refresh());if(!this.data)this.updateData();}}
+    }catch(e){if(current()){this.dataError=job.action==='list'?'数据读取失败':'操作失败';this.status(this.dataError+'：'+String(e.message||e),job.action==='list'?()=>this.refresh():null);if(!this.data){if(this.page==='history')this.drawSide();else this.updateData();}}}
     finally{if(current()){this.refreshToken=null;this.drainRefresh();}}
   }
   releaseHistory(){
@@ -358,7 +361,7 @@ class LocationPanel extends HTMLElement{
       this.loadHistory();
     }
   }
-  retryMap(target){if(!this.isConnected||!target.isConnected||!this._hass?.user?.is_admin)return;if(this.map){this.mapRenewRetryAt=0;this.mapStatus(target);this.refreshMapSession();return;}this.buildMap(target);}
+  retryMap(target){if(!this.isConnected||!target.isConnected||!this._hass?.user?.is_admin)return;if(this.map){this.mapRenewRetryAt=0;this.mapStatus(target,'正在恢复地图会话…');this.refreshMapSession();return;}this.buildMap(target);}
   async buildMap(target){
     const epoch=this.epoch,build={};this.mapBuild=build;this.mapStatus(target,'正在加载地图…');
     const valid=()=>this.isConnected&&epoch===this.epoch&&this.mapBuild===build&&target.isConnected&&this._hass?.user?.is_admin;
@@ -375,7 +378,7 @@ class LocationPanel extends HTMLElement{
     }catch(e){const current=valid();if(map&&this.map===map)this.destroyMap();if(current&&target.isConnected)this.mapStatus(target,'地图加载失败',()=>this.retryMap(target));}
   }
   destroyMap(){
-    this.mapBuild=null;this.cancelCamera();if(this.clusterFrame!=null){cancelAnimationFrame(this.clusterFrame);this.clusterFrame=null;}
+    this.mapBuild=null;this.mapRenewPending=null;this.mapSessionError=false;this.mapRenewRetryAt=0;this.cancelCamera();if(this.clusterFrame!=null){cancelAnimationFrame(this.clusterFrame);this.clusterFrame=null;}
     this.liveExpanded=null;this.liveClusters=[];this.clusterSignature=null;this.historyOverlays=[];this.historyNumberMarkers=[];this.historyTrackData=null;this.historyTrackOverlays=null;this.historyXY=null;this.historyMarkerMap=null;this.appliedLayer=null;this.markers=new Map();this.didFit=false;
     const map=this.map,listeners=this.mapListeners||[];this.map=null;this.mapListeners=[];
     if(map){for(const [name,cb] of listeners){try{map.off(name,cb);}catch(e){}}try{map.destroy();}catch(e){}}
