@@ -1,7 +1,7 @@
-const VERSION='0.2.5-preview';
+const VERSION='0.2.6-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
-const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,HISTORY_TODAY_MS:10000,HISTORY_PENDING_MS:5000,HISTORY_PAST_MS:60000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
+const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,HISTORY_TODAY_MS:10000,HISTORY_PENDING_MS:5000,HISTORY_PAST_MS:60000,READ_TIMEOUT_MS:15000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
 let sdkPromise,sdkSession,sdkConfigPromise;
 const WEBGL_SAFE_KEY='locaris.webgl_safe_session';
 const WEBGL_FORCE_RETRY_KEY='locaris.webgl_force_retry_session';
@@ -79,6 +79,20 @@ const el=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefine
 const icon=name=>{const paths={'mdi:menu':'M4 6h16M4 12h16M4 18h16','mdi:map-marker-radius-outline':'M12 21s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z M12 6a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:map-marker-path':'M5 6a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M19 14a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M7 8h7a3 3 0 0 1 0 6H8a3 3 0 0 0 0 6h7','mdi:cellphone':'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z M10 18h4','mdi:cog-outline':'M10 2h4l.7 3 2 .9 2.7-1.6 2 3.5-2.3 2.1v2.2l2.3 2.1-2 3.5-2.7-1.6-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.6-2-3.5L5 12.1V9.9L2.7 7.8l2-3.5 2.7 1.6 2-.9z M12 8a3 3 0 1 0 0 6 3 3 0 1 0 0-6','mdi:dots-horizontal':'M5 12h.1M12 12h.1M19 12h.1','tablet':'M5 3h14v18H5z M10 18h4','layers':'M3 8l9-5 9 5-9 5z M3 12l9 5 9-5 M3 16l9 5 9-5','locate':'M12 2v4 M12 18v4 M2 12h4 M18 12h4 M12 6a6 6 0 1 0 0 12 6 6 0 1 0 0-12'};const ns='http://www.w3.org/2000/svg',e=document.createElementNS(ns,'svg'),p=document.createElementNS(ns,'path');e.setAttribute('viewBox','0 0 24 24');e.setAttribute('width','22');e.setAttribute('height','22');e.setAttribute('aria-hidden','true');p.setAttribute('d',paths[name]||paths['mdi:cellphone']);p.setAttribute('fill','none');p.setAttribute('stroke','currentColor');p.setAttribute('stroke-width',name==='mdi:dots-horizontal'?'4':'1.8');p.setAttribute('stroke-linecap','round');p.setAttribute('stroke-linejoin','round');e.append(p);return e;};
 const selectArrowIcon=()=>{const selectArrow=document.createElementNS('http://www.w3.org/2000/svg','svg');selectArrow.setAttribute('viewBox','0 0 24 24');selectArrow.setAttribute('aria-hidden','true');const arrowPath=document.createElementNS('http://www.w3.org/2000/svg','path');arrowPath.setAttribute('d','M7 9l5-5 5 5M7 15l5 5 5-5');arrowPath.setAttribute('fill','none');arrowPath.setAttribute('stroke','currentColor');arrowPath.setAttribute('stroke-width','2');arrowPath.setAttribute('stroke-linecap','round');arrowPath.setAttribute('stroke-linejoin','round');selectArrow.append(arrowPath);return selectArrow;};
 const button=(text,fn,cls)=>{const b=el('button',text,cls);b.type='button';b.onclick=fn;return b;};
+function boundedRead(hass, message, timeout=TIMING.READ_TIMEOUT_MS){
+  let timer;
+  return Promise.race([
+    Promise.resolve().then(()=>hass.callWS(message)),
+    new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('请求超时'),{code:'read_timeout'})),timeout);})
+  ]).finally(()=>clearTimeout(timer));
+}
+function liveStateSignature(hass, candidates){
+  if(!hass?.states)return null;
+  return JSON.stringify((candidates||[]).filter(d=>d.managed).map(d=>{
+    const s=hass.states[d.entity_id],a=s?.attributes;
+    return [d.entity_id,s?.state,s?.last_updated,a?.latitude,a?.longitude,a?.gps_accuracy,a?.source_type];
+  }));
+}
 class LocationPanel extends HTMLElement{
   set hass(v){
     const old=this._hass;this._hass=v;
@@ -89,10 +103,13 @@ class LocationPanel extends HTMLElement{
     if(this.isConnected&&!this.started)this.start();
     if(this.started&&v?.connected===false){this.pendingActions=[];if(old?.connected!==false)this.status('HA 连接已断开');return;}
     if(this.started&&old?.connected===false&&v?.connected!==false&&!document.hidden){this.status();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&!this.historyLoading)this.loadHistory();else{this.loadHistory(true);this.drainHistoryAddresses();}}}
-    if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&(old.states[d.entity_id]?.last_updated!==v.states[d.entity_id]?.last_updated||old.states[d.entity_id]?.state!==v.states[d.entity_id]?.state)))this.liveDirty=true;
+    if(this.started&&this.page==='live'){
+      const signature=liveStateSignature(v,this.data?.candidates);
+      if(signature!==null&&signature!==this.liveHassSignature){this.liveHassSignature=signature;this.liveDirty=true;}
+    }
   }
-  connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('locaris.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
-  disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.data=null;this.liveAddressCache?.clear();this.dataError='';clearInterval(this.timer);this.timer=null;if(this.visibilityHandler){document.removeEventListener('visibilitychange',this.visibilityHandler);this.visibilityHandler=null;}this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveListView=null;this.stopViewport();this.closeHistoryCalendar();this.stopMenus();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
+  connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('locaris.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.liveHassSignature=null;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
+  disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.data=null;this.liveAddressCache?.clear();this.dataError='';clearInterval(this.timer);this.timer=null;this.liveHassSignature=null;if(this.resumeHandler){window.removeEventListener('focus',this.resumeHandler);window.removeEventListener('pageshow',this.resumeHandler);this.resumeHandler=null;}if(this.visibilityHandler){document.removeEventListener('visibilitychange',this.visibilityHandler);this.visibilityHandler=null;}this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveListView=null;this.stopViewport();this.closeHistoryCalendar();this.stopMenus();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
   render(){
     this.innerHTML=`<style>
     html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--primary-background-color,#131820);overscroll-behavior:none}locaris-panel{display:block;height:100vh;height:var(--lx-viewport,100dvh);width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--lx-host-bg,var(--primary-background-color,#131820));-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
@@ -232,8 +249,11 @@ class LocationPanel extends HTMLElement{
     else this.refresh();
     if(this.isConnected&&epoch===this.epoch){
       this.timer=setInterval(()=>this.refreshTick(),TIMING.REFRESH_TICK_MS);
-      this.visibilityHandler=()=>{if(!document.hidden){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&!this.historyLoading&&this._hass?.connected!==false)this.loadHistory();else{this.loadHistory(true);this.drainHistoryAddresses();}}}};
+      this.resumeHandler=()=>{if(!document.hidden&&this.isConnected&&this.started&&this._hass?.connected!==false){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){this.loadHistory(true);this.drainHistoryAddresses();}}};
+      this.visibilityHandler=()=>{if(!document.hidden)this.resumeHandler?.();};
       document.addEventListener('visibilitychange',this.visibilityHandler);
+      window.addEventListener('focus',this.resumeHandler);
+      window.addEventListener('pageshow',this.resumeHandler);
     }
   }
   refreshMapSession(){
@@ -280,11 +300,12 @@ class LocationPanel extends HTMLElement{
     const current=()=>this.isConnected&&this.epoch===epoch&&this.refreshToken===token;
     const active=()=>current()&&this._hass?.user?.is_admin&&this._hass.connected!==false;
     try{
-      const r=await this._hass.callWS({type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live,include_storage:settings,...(job.policy?{policy:job.policy}:{}),...(typeof job.delete_on_remove==='boolean'?{delete_on_remove:job.delete_on_remove}:{})});
+      const request={type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live,include_storage:settings,...(job.policy?{policy:job.policy}:{}),...(typeof job.delete_on_remove==='boolean'?{delete_on_remove:job.delete_on_remove}:{})};
+      const r=await (job.action==='list'?boundedRead(this._hass,request):this._hass.callWS(request));
       if(!active())return;
       if(live!==(this.page==='live')||settings!==(this.page==='settings')){this.refreshNeeded=true;return;}
-      const oldGap=this.policyValue('track_gap_minutes');this.data=r;this.dataError='';if(this.page==='history'&&oldGap!==this.policyValue('track_gap_minutes')){const legend=this.querySelector('[data-history-legend]');if(legend)legend.title=this.historyLegend();this.historyTrackData=null;this.paintHistory(false);}this.pruneLiveAddresses();this.status();const signature=JSON.stringify([this.page,r,this.page==='live'?new Date().toDateString():null]);if(signature!==this.renderSignature){this.updateData();this.renderSignature=signature;}else if(live)this.retryLiveAddresses();
-    }catch(e){if(current()){this.dataError=job.action==='list'?'数据读取失败':'操作失败';this.status(this.dataError+'：'+String(e.message||e),job.action==='list'?()=>this.refresh():null);if(!this.data){if(this.page==='history')this.drawSide();else this.updateData();}}}
+      const oldGap=this.policyValue('track_gap_minutes');this.data=r;if(live&&this.liveHassSignature===null)this.liveHassSignature=liveStateSignature(this._hass,r.candidates);this.dataError='';if(this.page==='history'&&oldGap!==this.policyValue('track_gap_minutes')){const legend=this.querySelector('[data-history-legend]');if(legend)legend.title=this.historyLegend();this.historyTrackData=null;this.paintHistory(false);}this.pruneLiveAddresses();this.status();const signature=JSON.stringify([this.page,r,this.page==='live'?new Date().toDateString():null]);if(signature!==this.renderSignature){this.updateData();this.renderSignature=signature;}else if(live)this.retryLiveAddresses();
+    }catch(e){if(current()){if(job.action==='list'&&live)this.liveDirty=true;this.dataError=job.action==='list'?'数据读取失败':'操作失败';this.status(this.dataError+'：'+String(e.message||e),job.action==='list'?()=>this.refresh():null);if(!this.data){if(this.page==='history')this.drawSide();else this.updateData();}}}
     finally{if(current()){this.refreshToken=null;this.drainRefresh();}}
   }
   releaseHistory(){
@@ -453,7 +474,7 @@ class LocationPanel extends HTMLElement{
   }
   async resolveAddress(entity,recorded_at,target){
     try{
-      const r=await this._hass.callWS({type:NS+'address',entity_id:entity,...(recorded_at===undefined?{}:{recorded_at})});
+      const r=await boundedRead(this._hass,{type:NS+'address',entity_id:entity,...(recorded_at===undefined?{}:{recorded_at})});
       if(target.isConnected)target.textContent=r.address||'地址暂不可用';return r.address||null;
     }catch(e){if(target.isConnected)target.textContent='地址暂不可用';return null;}
   }
@@ -591,7 +612,7 @@ class LocationPanel extends HTMLElement{
     if(!entity||!day.value||this._hass.connected===false)return;
     const requestSeq=this.historySeq,token={};this.historyLoading=token;this.lastHistoryQuery=Date.now();
     try{
-      const r=await this._hass.callWS({type:NS+'history',entity_id:entity,start:start.getTime(),end:end.getTime(),collapse_repeated:false,...(incremental&&this.historyRevision?{known_revision:this.historyRevision}:{})});
+      const r=await boundedRead(this._hass,{type:NS+'history',entity_id:entity,start:start.getTime(),end:end.getTime(),collapse_repeated:false,...(incremental&&this.historyRevision?{known_revision:this.historyRevision}:{})});
       if(this.page!=='history'||requestSeq!==this.historySeq||!timeline.isConnected||this.historyLoading!==token||!this._hass?.user?.is_admin||this._hass.connected===false)return;
       this.historyRevision=r.revision;this.historyQueryKey=key;this.historySyncStatus=r.sync_status;
       if(incremental&&(r.unchanged||(JSON.stringify(r.points)===JSON.stringify(this.historyData)&&!!r.truncated===this.historyTruncated))){this.updateHistorySync(timeline);return;}
@@ -757,7 +778,7 @@ class LocationPanel extends HTMLElement{
     this.liveAddressCache??=new Map();let entry=this.liveAddressCache.get(key);
     if(!entry||Date.now()>=entry.until){
       entry={until:Date.now()+TIMING.ADDRESS_SUCCESS_MS,entity:d.entity_id,generation:d.recording_generation,latitude:p.latitude,longitude:p.longitude};
-      entry.promise=this._hass.callWS({type:NS+'address',entity_id:d.entity_id,expected_updated_at:p.updated_at,expected_latitude:p.latitude,expected_longitude:p.longitude}).then(r=>r.address||null).catch(()=>null).then(address=>{entry.until=Date.now()+(address?TIMING.ADDRESS_SUCCESS_MS:TIMING.ADDRESS_FAILURE_MS);return address;});
+      entry.promise=boundedRead(this._hass,{type:NS+'address',entity_id:d.entity_id,expected_updated_at:p.updated_at,expected_latitude:p.latitude,expected_longitude:p.longitude}).then(r=>r.address||null).catch(()=>null).then(address=>{entry.until=Date.now()+(address?TIMING.ADDRESS_SUCCESS_MS:TIMING.ADDRESS_FAILURE_MS);return address;});
       if(this.liveAddressCache.size>=128&&!this.liveAddressCache.has(key))this.liveAddressCache.delete(this.liveAddressCache.keys().next().value);
       this.liveAddressCache.set(key,entry);
     }
