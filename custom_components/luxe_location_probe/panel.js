@@ -1,4 +1,4 @@
-const VERSION='0.1.28-preview';
+const VERSION='0.1.29-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -274,7 +274,7 @@ class LocationPanel extends HTMLElement{
       const p=d.enabled?d.position:null;
       if(p){
         const selected=this.liveSelected===id,key=JSON.stringify([id,d.recording_generation,p.latitude,p.longitude]);
-        if(!item.addr){item.addr=el('div','地址解析中…','lx-live-address');item.meta=el('div','','lx-muted lx-live-meta');item.meta.title='HA 实体更新时间，非确认的 GPS 上报时间';info.replaceChildren(name,item.addr,item.meta);item.status=null;}
+        if(!item.addr){item.addr=el('div','地址解析中…','lx-live-address');item.meta=el('div','','lx-muted lx-live-meta');item.meta.title='HA 实体更新时间（可能为恢复或属性更新），不是 GPS 实际采样时间';info.replaceChildren(name,item.addr,item.meta);item.status=null;}
         const meta=this.liveTime(p.updated_at)+' · '+(p.accuracy==null?'精度未知':'精度 '+Math.round(p.accuracy)+' m');
         if(item.meta.textContent!==meta)item.meta.textContent=meta;
         if(row.dataset.focus!==id){row.dataset.focus=id;row.tabIndex=0;row.setAttribute('role','button');}

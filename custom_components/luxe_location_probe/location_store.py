@@ -33,7 +33,18 @@ def point(state):
     p = position(state)
     if p is None:
         return None
-    return (int(state.last_updated.timestamp() * 1000), *p)
+    stamp = state.last_updated
+    if stamp is None or stamp.tzinfo is None:
+        return None
+    return (int(stamp.timestamp() * 1000), *p)
+
+def changed_point(old, new):
+    """A changed valid GPS payload, not proof of a fresh hardware fix."""
+    previous = position(old)
+    current = point(new)
+    if previous is None or current is None or previous == current[1:]:
+        return None
+    return current
 
 class Store:
     def __init__(self, hass):
@@ -113,10 +124,10 @@ class Store:
         self.devices = set(recording) & self.managed
         await self.migrate_discovery()
         await self.discover()
-        self.listen()
-        self.timer = async_track_time_interval(self.hass, self.periodic, timedelta(hours=1))
         await self.cleanup()
         self.ready = True
+        self.listen()
+        self.timer = async_track_time_interval(self.hass, self.periodic, timedelta(hours=1))
         self.discovery = async_track_time_interval(self.hass, self.scan_tick, timedelta(minutes=1))
         for entity in sorted(self.devices):
             self.schedule_backfill(entity)
@@ -225,9 +236,9 @@ class Store:
             return
         entity = event.data["entity_id"]
         new, old = event.data.get("new_state"), event.data.get("old_state")
-        p = point(new)
-        # Restored state or first appearance after restart is not evidence of a fresh GPS sample.
-        if old is None or p is None or position(old) == position(new):
+        p = changed_point(old, new)
+        # Ignore restored/first available snapshots; Recorder may recover actual changes.
+        if p is None or entity not in self.devices:
             return
         self.spawn(self.write(entity, p, self.generations.get(entity, 0)))
 
