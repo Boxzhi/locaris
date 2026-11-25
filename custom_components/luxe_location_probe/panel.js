@@ -1,4 +1,4 @@
-const VERSION='0.1.27-preview';
+const VERSION='0.1.27.1-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -35,7 +35,7 @@ class LocationPanel extends HTMLElement{
     if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&d.enabled&&(old.states[d.entity_id]?.last_updated!==v.states[d.entity_id]?.last_updated||old.states[d.entity_id]?.state!==v.states[d.entity_id]?.state)))this.liveDirty=true;
   }
   connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
-  disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.data=null;this.liveAddressCache?.clear();clearInterval(this.timer);this.timer=null;if(this.visibilityHandler){document.removeEventListener('visibilitychange',this.visibilityHandler);this.visibilityHandler=null;}this.liveListObserver?.disconnect();this.liveListObserver=null;this.stopViewport();this.closeHistoryCalendar();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
+  disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.data=null;this.liveAddressCache?.clear();clearInterval(this.timer);this.timer=null;if(this.visibilityHandler){document.removeEventListener('visibilitychange',this.visibilityHandler);this.visibilityHandler=null;}this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveListView=null;this.stopViewport();this.closeHistoryCalendar();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
   render(){
     this.innerHTML=`<style>
     html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--primary-background-color,#131820);overscroll-behavior:none}luxe-location-probe{display:block;height:100vh;height:var(--lx-viewport,100dvh);width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--lx-host-bg,var(--primary-background-color,#131820));-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
@@ -228,7 +228,7 @@ class LocationPanel extends HTMLElement{
   }
   switchPage(page){
     this.closeHistoryCalendar();this.renderSignature=null;this.liveDirty=false;
-    this.stopHistoryAddresses();this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveSelected=null;if(this.page!==page&&this.data){this.data={...this.data,candidates:this.data.candidates.map(d=>{const {position,...rest}=d;return rest;})};}this.page=page;this.releaseHistory();this.destroyMap();
+    this.stopHistoryAddresses();this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveListView=null;this.liveSelected=null;if(this.page!==page&&this.data){this.data={...this.data,candidates:this.data.candidates.map(d=>{const {position,...rest}=d;return rest;})};}this.page=page;this.releaseHistory();this.destroyMap();
     for(const b of this.querySelectorAll('[data-page]'))b.setAttribute('aria-selected',String(b.dataset.page===page));
     const main=this.querySelector('.lx-content');main.replaceChildren();main.classList.toggle('lx-map-page',page==='live'||page==='history');
     if(page==='live'||page==='history'){
@@ -240,37 +240,63 @@ class LocationPanel extends HTMLElement{
     if(this.started){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();}
   }
   updateData(){if(this.page==='live'){if(this.liveSelected&&!this.data?.candidates.some(d=>d.entity_id===this.liveSelected&&d.managed&&d.enabled&&d.position)){this.liveSelected=null;this.cancelCamera();}this.drawSide();this.syncMarkers();}else if(this.page==='history'){const select=this.querySelector('.lx-history-filter select'),ids=(this.data?.candidates||[]).filter(d=>d.managed).map(d=>d.entity_id);if(!select||JSON.stringify(Array.from(select.options,o=>o.value))!==JSON.stringify(ids))this.drawSide();else for(const o of select.options){const d=this.data.candidates.find(d=>d.entity_id===o.value);if(d&&o.textContent!==d.name)o.textContent=d.name;}}else this.drawData();}
-  drawSide(){
-    const side=this.querySelector('.lx-side');if(!side)return;this.closeHistoryCalendar();
-    const layout=this.querySelector('.lx-map-layout'),filter=layout.querySelector('.lx-history-filter'),old=filter?.querySelector('select')?.value,date=filter?.querySelector('[data-history-date]')?.value,scroll=side.querySelector('.lx-list-scroll')?.scrollTop||0;filter?.remove();side.replaceChildren();
-    const data=this.data,devices=(data?.candidates||[]).filter(d=>d.managed);
-    if(this.page==='live'){
-      const card=el('section',undefined,'lx-card'),head=el('div',undefined,'lx-title');head.append(el('h2','设备位置'),el('span',devices.length+' 台','lx-muted'));card.append(head);
-      const list=el('div',undefined,'lx-list-scroll');card.append(list);
-      for(const d of devices){
-        const row=el('div',undefined,'lx-list-row lx-live-row'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name');
-        avatar.append(icon(/ipad|tablet|平板/i.test(d.name)?'tablet':'mdi:cellphone'));avatar.style.color=this.color(d.entity_id);info.append(el('strong',d.name));const p=d.position;
-        if(p){
-          const selected=this.liveSelected===d.entity_id,addr=el('div','地址解析中…','lx-live-address'),meta=el('div',this.liveTime(p.updated_at)+' · '+(p.accuracy==null?'精度未知':'精度 '+Math.round(p.accuracy)+' m'),'lx-muted lx-live-meta');
-          info.append(addr,meta);meta.title='HA 实体更新时间，非确认的 GPS 上报时间';
-          row.dataset.focus=d.entity_id;row.tabIndex=0;row.setAttribute('role','button');row.setAttribute('aria-pressed',String(selected));
-          this.liveAddress(d,addr,selected);
-          row.onclick=()=>{this.liveSelected=this.liveSelected===d.entity_id?null:d.entity_id;if(this.liveSelected)this.focusDevice(d.entity_id);else this.fitMarkers();this.drawSide();};
-          row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();row.click();}};
-        }else info.append(el('div',!d.enabled?'历史记录未开启 · 未展示位置':'暂无定位','lx-muted'));
-        row.append(avatar,info);list.append(row);
-      }
-      if(!devices.length)list.append(el('p',data?'暂无设备':'正在读取设备…','lx-muted'));side.append(card);list.scrollTop=scroll;
+  drawLiveSide(side,layout,devices,data){
+    let view=this.liveListView;
+    if(!view||view.side!==side||!view.card.isConnected){
       this.liveListObserver?.disconnect();
-      const measure=()=>{
-        if(!card.isConnected||this.page!=='live')return;
+      const card=el('section',undefined,'lx-card'),head=el('div',undefined,'lx-title'),count=el('span','','lx-muted'),list=el('div',undefined,'lx-list-scroll');
+      head.append(el('h2','设备位置'),count);card.append(head,list);side.replaceChildren(card);
+      view={side,card,head,count,list,rows:new Map(),empty:el('p','','lx-muted')};this.liveListView=view;
+      view.measure=()=>{
+        if(this.liveListView!==view||!card.isConnected||this.page!=='live')return;
         const cs=getComputedStyle(card),hs=getComputedStyle(head);
         const natural=Math.ceil(list.scrollHeight+head.getBoundingClientRect().height+(parseFloat(hs.marginBottom)||0)+(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0)+(parseFloat(cs.borderTopWidth)||0)+(parseFloat(cs.borderBottomWidth)||0));
-        const value=natural+'px';if(layout.style.getPropertyValue('--lx-live-list-natural')!==value){layout.style.setProperty('--lx-live-list-natural',value);requestAnimationFrame(()=>this.map?.resize?.());}
+        const value=natural+'px';if(layout.style.getPropertyValue('--lx-live-list-natural')!==value){layout.style.setProperty('--lx-live-list-natural',value);requestAnimationFrame(()=>{if(this.liveListView===view)this.map?.resize?.();});}
       };
-      if(typeof ResizeObserver==='function'){this.liveListObserver=new ResizeObserver(measure);this.liveListObserver.observe(list);this.liveListObserver.observe(head);for(const row of list.children)this.liveListObserver.observe(row);}
-      requestAnimationFrame(measure);
-    }else{
+      if(typeof ResizeObserver==='function'){this.liveListObserver=new ResizeObserver(view.measure);this.liveListObserver.observe(list);this.liveListObserver.observe(head);}
+    }
+    const {list,rows,count,empty}=view,ids=new Set(devices.map(d=>d.entity_id));
+    if(count.textContent!==devices.length+' 台')count.textContent=devices.length+' 台';
+    for(const [id,item] of rows)if(!ids.has(id)){this.liveListObserver?.unobserve(item.row);item.row.remove();rows.delete(id);}
+    if(devices.length)empty.remove();
+    for(let index=0;index<devices.length;index++){
+      const d=devices[index],id=d.entity_id,kind=/ipad|tablet|平板/i.test(d.name)?'tablet':'mdi:cellphone';let item=rows.get(id);
+      if(!item){
+        const row=el('div',undefined,'lx-list-row lx-live-row'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name'),name=el('strong',d.name);
+        avatar.append(icon(kind));avatar.style.color=this.color(id);info.append(name);row.append(avatar,info);
+        row.onclick=()=>{if(!row.dataset.focus)return;this.liveSelected=this.liveSelected===id?null:id;if(this.liveSelected)this.focusDevice(id);else this.fitMarkers();this.drawSide();};
+        row.onkeydown=e=>{if(row.dataset.focus&&(e.key==='Enter'||e.key===' ')){e.preventDefault();row.click();}};
+        item={row,avatar,info,name,kind,addr:null,meta:null,status:null,key:null,full:null};rows.set(id,item);this.liveListObserver?.observe(row);
+      }
+      const {row,avatar,info,name}=item;
+      if(name.textContent!==d.name)name.textContent=d.name;
+      if(item.kind!==kind){avatar.replaceChildren(icon(kind));item.kind=kind;}
+      const p=d.enabled?d.position:null;
+      if(p){
+        const selected=this.liveSelected===id,key=JSON.stringify([id,d.recording_generation,p.latitude,p.longitude]);
+        if(!item.addr){item.addr=el('div','地址解析中…','lx-live-address');item.meta=el('div','','lx-muted lx-live-meta');item.meta.title='HA 实体更新时间，非确认的 GPS 上报时间';info.replaceChildren(name,item.addr,item.meta);item.status=null;}
+        const meta=this.liveTime(p.updated_at)+' · '+(p.accuracy==null?'精度未知':'精度 '+Math.round(p.accuracy)+' m');
+        if(item.meta.textContent!==meta)item.meta.textContent=meta;
+        if(row.dataset.focus!==id){row.dataset.focus=id;row.tabIndex=0;row.setAttribute('role','button');}
+        if(row.getAttribute('aria-pressed')!==String(selected))row.setAttribute('aria-pressed',String(selected));
+        if(item.key!==key||item.full!==selected){if(item.key!==key)item.addr.textContent='地址解析中…';item.key=key;item.full=selected;this.liveAddress(d,item.addr,selected);}
+        else if(item.addr._lxRetryAt&&Date.now()>=item.addr._lxRetryAt){item.addr._lxRetryAt=0;this.liveAddress(d,item.addr,selected);}
+      }else{
+        if(!item.status){item.status=el('div','','lx-muted');info.replaceChildren(name,item.status);item.addr=null;item.meta=null;item.key=null;item.full=null;}
+        const status=!d.enabled?'历史记录未开启 · 未展示位置':'暂无定位';if(item.status.textContent!==status)item.status.textContent=status;
+        if(row.dataset.focus){delete row.dataset.focus;row.removeAttribute('tabindex');row.removeAttribute('role');row.removeAttribute('aria-pressed');}
+      }
+      if(list.children[index]!==row)list.insertBefore(row,list.children[index]||null);
+    }
+    if(!devices.length){const label=data?'暂无设备':'正在读取设备…';if(empty.textContent!==label)empty.textContent=label;if(!empty.isConnected)list.append(empty);}
+    requestAnimationFrame(view.measure);
+  }
+  drawSide(){
+    const side=this.querySelector('.lx-side');if(!side)return;this.closeHistoryCalendar();
+    const layout=this.querySelector('.lx-map-layout'),data=this.data,devices=(data?.candidates||[]).filter(d=>d.managed);
+    if(this.page==='live'){this.drawLiveSide(side,layout,devices,data);return;}
+    const filter=layout.querySelector('.lx-history-filter'),old=filter?.querySelector('select')?.value,date=filter?.querySelector('[data-history-date]')?.value;filter?.remove();side.replaceChildren();
+    {
       const card=el('section',undefined,'lx-card lx-history-filter');card.append(el('h2','历史轨迹'));
       const select=el('select',undefined,'lx-field lx-history-select');select.setAttribute('aria-label','选择设备');const selectWrap=el('div',undefined,'lx-history-select-wrap');const selectArrow=document.createElementNS('http://www.w3.org/2000/svg','svg');selectArrow.setAttribute('viewBox','0 0 24 24');selectArrow.setAttribute('aria-hidden','true');const arrowPath=document.createElementNS('http://www.w3.org/2000/svg','path');arrowPath.setAttribute('d','M7 9l5-5 5 5M7 15l5 5 5-5');arrowPath.setAttribute('fill','none');arrowPath.setAttribute('stroke','currentColor');arrowPath.setAttribute('stroke-width','2');arrowPath.setAttribute('stroke-linecap','round');arrowPath.setAttribute('stroke-linejoin','round');selectArrow.append(arrowPath);selectWrap.append(select,selectArrow);
       for(const d of devices){const opt=el('option',d.name);opt.value=d.entity_id;select.append(opt);}
@@ -448,16 +474,14 @@ class LocationPanel extends HTMLElement{
       const body=el('div',undefined,'lx-list-scroll');timeline.append(body);
       const timeOnly=t=>new Date(t).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
       const close=(restore=false)=>{if(!expanded)return;expanded.row.setAttribute('aria-expanded','false');expanded.card.classList.remove('lx-point-open');expanded.arrow.textContent='⌄';this.animatePoint(expanded.detail,false);expanded=null;if(restore){this.selectHistoryMarker(null);this.fitHistory();}};
-      const more=button('显示更多',()=>{limit+=50;render();});
-      const render=()=>{
+      const more=button('显示更多',()=>{limit+=50;render(true);});
+      const render=(appendOnly=false)=>{
         if(rendering||seq!==this.historySeq||!body.isConnected)return;
         rendering=true;
         const active=this.selectedHistoryIndex,scroll=body.scrollTop;
         // Cancel obsolete visible-row observations; pending requests for removed DOM nodes are discarded.
-        this.historyAddressObserver?.disconnect();
-        this.historyAddressQueue=[];
-        expanded=null;body.replaceChildren();shown=0;
-        for(const indices of groups.slice(0,limit)){
+        if(!appendOnly){this.historyAddressObserver?.disconnect();this.historyAddressQueue=[];expanded=null;body.replaceChildren();shown=0;}else more.remove();
+        for(const indices of groups.slice(shown,limit)){
           const i=indices[0],p=r.points[i],card=el('div',undefined,'lx-point-card'),detail=el('div',undefined,'lx-point-address lx-group-detail'),arrow=el('span','⌄','lx-point-arrow');
           detail.hidden=true;
           const row=button('',()=>open(i,false),'lx-point-row'),number=el('span',this.historyLabel(indices),'lx-point-number'),info=el('span',undefined,'lx-point-label');
@@ -465,12 +489,12 @@ class LocationPanel extends HTMLElement{
           if(indices.length>1)info.append(el('span',indices.length+' 次定位记录','lx-muted lx-group-count'));
           row.dataset.groupStart=String(i);row.setAttribute('aria-expanded','false');row.append(number,info,arrow);
           const focus=j=>{this.selectHistoryMarker(j);if(this.map)this.flyTo(this.gcj(r.points[j].longitude,r.points[j].latitude),17);for(const child of detail.children)child.classList.toggle('lx-raw-selected',Number(child.dataset.index)===j);};
-          const open=(j,force)=>{if(expanded?.row===row){if(!force){close(true);return;}focus(j);return;}close(false);expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';this.animatePoint(detail,true);focus(j);};
-          for(const j of indices){const raw=r.points[j],child=button('',()=>focus(j),'lx-raw-point');child.dataset.index=String(j);child.append(el('span',String(j+1),'lx-raw-number'),el('span',timeOnly(raw.recorded_at)),el('span',raw.accuracy==null?'精度未知':Math.round(raw.accuracy)+' m','lx-muted'));detail.append(child);}
+          const open=(j,force)=>{populate();if(expanded?.row===row){if(!force){close(true);return;}focus(j);return;}close(false);expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';this.animatePoint(detail,true);focus(j);};
+          const populate=()=>{if(detail._lxPopulated)return;detail._lxPopulated=true;const fragment=document.createDocumentFragment();for(const j of indices){const raw=r.points[j],child=button('',()=>focus(j),'lx-raw-point');child.dataset.index=String(j);child.append(el('span',String(j+1),'lx-raw-number'),el('span',timeOnly(raw.recorded_at)),el('span',raw.accuracy==null?'精度未知':Math.round(raw.accuracy)+' m','lx-muted'));fragment.append(child);}detail.append(fragment);};
           row.openPoint=j=>open(j,true);card.append(row,detail);body.append(card);
           if(!this.historyResolved.has(p.recorded_at)&&!this.historyFailed.has(p.recorded_at))watchAddress(address);
           // Exact coordinate groups reuse the representative address; distinct nearby points must resolve individually before merging.
-          if(active!=null&&indices.includes(active)){expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';detail.hidden=false;for(const child of detail.children)child.classList.toggle('lx-raw-selected',Number(child.dataset.index)===active);}
+          if(active!=null&&indices.includes(active)){populate();expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';detail.hidden=false;for(const child of detail.children)child.classList.toggle('lx-raw-selected',Number(child.dataset.index)===active);}
           shown++;
         }
         if(shown<groups.length)body.append(more);
@@ -489,7 +513,7 @@ class LocationPanel extends HTMLElement{
         render();this.paintHistory(false);
       };
       this.historyTimelineGroups=groups;render();
-      this.openHistoryPoint=i=>{if(seq!==this.historySeq||!body.isConnected)return;const g=groups.findIndex(v=>v.includes(i));if(g<0)return;if(g>=limit){limit=Math.ceil((g+1)/50)*50;render();}const row=body.querySelector('[data-group-start="'+groups[g][0]+'"]');if(row){row.openPoint(i);row.scrollIntoView({block:'nearest'});}};
+      this.openHistoryPoint=i=>{if(seq!==this.historySeq||!body.isConnected)return;const g=groups.findIndex(v=>v.includes(i));if(g<0)return;if(g>=limit){limit=Math.ceil((g+1)/50)*50;render(true);}const row=body.querySelector('[data-group-start="'+groups[g][0]+'"]');if(row){row.openPoint(i);row.scrollIntoView({block:'nearest'});}};
       this.paintHistory();
     }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),el('p','查询失败：'+String(e.message||e),'lx-muted'));}
   }
@@ -579,6 +603,7 @@ class LocationPanel extends HTMLElement{
   }
   async liveAddress(d,target,full){
     const p=d.position,key=JSON.stringify([d.entity_id,d.recording_generation,p.latitude,p.longitude]);
+    const token={};target._lxAddressToken=token;target._lxRetryAt=0;
     if(document.hidden){target._lxRetryAt=Date.now();return;}
     this.liveAddressCache??=new Map();let entry=this.liveAddressCache.get(key);
     if(!entry||Date.now()>=entry.until){
@@ -588,8 +613,8 @@ class LocationPanel extends HTMLElement{
       this.liveAddressCache.set(key,entry);
     }
     const address=await entry.promise;
-    if(target.isConnected&&this.page==='live'&&(this.liveAddressCache.get(key)===entry||(!address&&!this.liveAddressCache.has(key))))target.textContent=address?(full?address:address.replace(/^(?:[^省]{2,8}省|内蒙古自治区|广西壮族自治区|宁夏回族自治区|新疆维吾尔自治区|西藏自治区)/,'')):'地址暂不可用';
-    if(target.isConnected)target._lxRetryAt=address?0:entry.until;
+    if(target.isConnected&&target._lxAddressToken===token&&this.page==='live'&&this.liveAddressCache.get(key)===entry)target.textContent=address?(full?address:address.replace(/^(?:[^省]{2,8}省|内蒙古自治区|广西壮族自治区|宁夏回族自治区|新疆维吾尔自治区|西藏自治区)/,'')):'地址暂不可用';
+    if(target.isConnected&&target._lxAddressToken===token&&this.page==='live')target._lxRetryAt=this.liveAddressCache.get(key)===entry?(address?0:entry.until):Date.now()+30000;
   }
   color(id){
     this.deviceColors??=new Map();const palette=['#4387e8','#0ca87d','#a855f7','#e58b25','#e05e86','#0891b2','#84a832','#c45e38'];
