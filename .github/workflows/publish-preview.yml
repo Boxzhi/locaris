@@ -1,0 +1,28 @@
+name: Publish Locaris v0.2.8-preview
+on:
+  push:
+    branches: ['release/v0.2.8-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.8-preview >/dev/null 2>&1; then exit 0; fi
+          cat > /tmp/notes.md <<'EOF'
+          ## 地图视野与切换动画优化
+          - 按参与切换的设备坐标、地图尺寸和安全边距动态计算过渡视野。
+          - 已选中设备时适配当前与目标设备；未选中时适配全部有效设备。
+          - 远距离使用动态适配、平移、放大过渡；近距离使用轻微缩放或平移。
+          - 安全边距考虑标记尺寸、工具栏及菜单按钮；显示全部位置及轨迹统一使用新算法。
+          - 支持连续切换及手动操作中断，保留聚合展开逻辑和最终聚焦级别。
+          - 新增地图几何及动画回归测试，CI 全部通过。真实高德地图及各终端视觉效果待验收。
+          - 不改变定位采集、历史记录和数据库逻辑。
+          EOF
+          gh release create v0.2.8-preview --target db66e6ef8872a360dcb5747268e0680f6ab8f0e4 --title "Locaris v0.2.8-preview" --notes-file /tmp/notes.md --prerelease --latest=false
