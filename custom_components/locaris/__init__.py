@@ -161,7 +161,7 @@ async def ws_storage(hass, connection, msg):
         store.warn("Location storage operation failed (no coordinates logged)")
         connection.send_error(msg["id"], "storage_failed", "Storage operation failed")
 
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/history", vol.Required("entity_id"): checked(security.entity_id), vol.Required("start"): checked(security.timestamp), vol.Required("end"): checked(security.timestamp), vol.Optional("collapse_repeated", default=False): bool})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/history", vol.Required("entity_id"): checked(security.entity_id), vol.Required("start"): checked(security.timestamp), vol.Required("end"): checked(security.timestamp), vol.Optional("collapse_repeated", default=False): bool, vol.Optional("known_revision"): vol.All(str, vol.Length(max=160))})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_history(hass, connection, msg):
@@ -182,6 +182,10 @@ async def ws_history(hass, connection, msg):
             connection.send_error(msg["id"], "invalid_device", "Device not managed")
             return
         generation = store.generations.get(entity, 0)
+        meta = store.history_meta(entity)
+        # The revision is scoped to this exact range and collapse mode.
+        revision = f'{meta["revision"]}:{start}:{end}:{int(msg["collapse_repeated"])}'
+        unchanged = msg.get("known_revision") == revision
         def read(con):
             sql = "SELECT recorded_at,latitude,longitude,accuracy FROM locaris_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at"
             args = (entity,max(start,now_ms()-WINDOW),min(end,now_ms()+1))
@@ -190,7 +194,8 @@ async def ws_history(hass, connection, msg):
             rows = con.execute(sql+" LIMIT 10001",args).fetchall()
             return [dict(r) for r in rows[:10000]], 0, len(rows)>10000
         try:
-            rows, hidden, truncated = await store.run(read)
+            if not unchanged:
+                rows, hidden, truncated = await store.run(read)
         except Exception:
             store.warn("Location history query failed (no coordinates logged)")
             connection.send_error(msg["id"], "history_failed", "History query failed")
@@ -198,7 +203,10 @@ async def ws_history(hass, connection, msg):
     if not await current_admin(hass, connection) or not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store or entity not in store.managed or store.generations.get(entity, 0) != generation:
         connection.send_error(msg["id"], "not_loaded", "Storage not ready")
         return
-    connection.send_result(msg["id"], {"points":rows,"truncated":truncated,"collapsed":hidden})
+    result = {"revision": revision, "sync_status": meta["sync_status"], "unchanged": unchanged}
+    if not unchanged:
+        result.update(points=rows, truncated=truncated, collapsed=hidden)
+    connection.send_result(msg["id"], result)
 
 def gcj(lon, lat):
     if not (72.004 <= lon <= 137.8347 and .8293 <= lat <= 55.8271):
@@ -473,7 +481,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.4-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.5-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("entry_id", None)

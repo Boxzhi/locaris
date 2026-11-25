@@ -1,7 +1,7 @@
 {
   "domain": "locaris",
   "name": "Locaris",
-  "version": "0.2.4-preview",
+  "version": "0.2.5-preview",
   "config_flow": true,
   "dependencies": [
     "frontend",

@@ -10,6 +10,7 @@ import sqlite3
 import time
 
 from .history_logic import recorder_changes
+from .history_sync import HistorySync
 from .const import (WINDOW, HISTORY_RETENTION_DAYS, DAY_MS,
     BACKFILL_RETRY_S, BACKFILL_OVERLAP_MS, RECORDER_MIN_DELAY_MS,
     RECORDER_DEFAULT_COMMIT_S, RECORDER_COMMIT_BUFFER_MS, RECORDER_BOUNDARY_MS,
@@ -61,6 +62,7 @@ class Store:
         self.cleanup_task = None
         self.policy = dict(DEFAULT_POLICY)
         self.schedule = None
+        self.history_sync = HistorySync()
         self.importing = {}
         self.retry_import = {}
         self.recovery_from = {}
@@ -310,6 +312,7 @@ class Store:
     @callback
     def invalidate(self, entity):
         self.generations[entity] = self.generations.get(entity, 0) + 1
+        self.history_sync.invalidate(entity)
         self.last_valid.pop(entity, None)
         self.retry_import.pop(entity, None)
         self.recovery_from.pop(entity, None)
@@ -443,7 +446,8 @@ class Store:
         try:
             async with self.lock:
                 if self.active and self.ready and entity in self.devices and self.generations.get(entity, 0) == generation:
-                    await self.run(self.insert, entity, [p], "state_change")
+                    count = await self.run(self.insert, entity, [p], "state_change")
+                    self.history_sync.changed(entity, count)
         except Exception:
             self.defer_backfill(entity, generation, p[0])
             self.warn("Location probe write failed (no coordinates logged)")
@@ -560,13 +564,16 @@ class Store:
                     if not self.recorder_available(recorder):
                         self.defer_backfill(entity, generation)
                         return
-                    await self.run(self.insert, entity, rows, "recorder", stop)
+                    count = await self.run(self.insert, entity, rows, "recorder", stop)
+                    self.history_sync.changed(entity, count)
                 start = stop
             if self.active and entity in self.devices and self.generations.get(entity, 0) == generation and recovery is not None:
                 if end <= recovery:
                     self.defer_backfill(entity, generation)
                 elif entity not in self.retry_import and self.recovery_from.get(entity) == recovery:
                     self.recovery_from.pop(entity, None)
+            if self.active and entity in self.devices and self.generations.get(entity, 0) == generation and entity not in self.retry_import:
+                self.history_sync.completed.add(entity)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -600,9 +607,10 @@ class Store:
                 return
             cutoff = now_ms() - WINDOW
             def prune(c):
-                c.execute("DELETE FROM locaris_locations WHERE recorded_at < ?", (cutoff,))
+                count = c.execute("DELETE FROM locaris_locations WHERE recorded_at < ?", (cutoff,)).rowcount
                 c.execute("DELETE FROM locaris_address_cache WHERE created_at < ?", (cutoff,))
-            await self.run(prune)
+                return count
+            self.history_sync.pruned(await self.run(prune))
             await self.hass.async_add_executor_job(self.checkpoint_if_needed)
             self.last_cleanup = now_ms()
 
@@ -627,6 +635,12 @@ class Store:
         con.execute("INSERT INTO locaris_address_cache VALUES (?,?,?,?,?) ON CONFLICT(entity_id,lon,lat) DO UPDATE SET address=excluded.address,created_at=excluded.created_at", (entity,lon,lat,address,now_ms()))
         # Bound storage independently of the retention window.
         con.execute("DELETE FROM locaris_address_cache WHERE rowid IN (SELECT rowid FROM locaris_address_cache ORDER BY created_at DESC LIMIT -1 OFFSET 10000)")
+
+    def history_meta(self, entity):
+        generation = self.generations.get(entity, 0)
+        return self.history_sync.meta(entity, generation, entity in self.devices,
+            self.importing.get(entity) == generation,
+            self.backfill_pending.get(entity) == generation, entity in self.retry_import)
 
     async def storage_stats(self):
         def read(con):

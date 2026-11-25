@@ -1,7 +1,7 @@
-const VERSION='0.2.4-preview';
+const VERSION='0.2.5-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
-const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
+const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,HISTORY_TODAY_MS:10000,HISTORY_PENDING_MS:5000,HISTORY_PAST_MS:60000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
 let sdkPromise,sdkSession,sdkConfigPromise;
 const WEBGL_SAFE_KEY='locaris.webgl_safe_session';
 const WEBGL_FORCE_RETRY_KEY='locaris.webgl_force_retry_session';
@@ -88,7 +88,7 @@ class LocationPanel extends HTMLElement{
     if(this.isConnected&&this.started&&old?.user&&!old.user.is_admin&&v?.user?.is_admin)this.started=false;
     if(this.isConnected&&!this.started)this.start();
     if(this.started&&v?.connected===false){this.pendingActions=[];if(old?.connected!==false)this.status('HA 连接已断开');return;}
-    if(this.started&&old?.connected===false&&v?.connected!==false&&!document.hidden){this.status();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&!this.historyLoading)this.loadHistory();else this.drainHistoryAddresses();}}
+    if(this.started&&old?.connected===false&&v?.connected!==false&&!document.hidden){this.status();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&!this.historyLoading)this.loadHistory();else{this.loadHistory(true);this.drainHistoryAddresses();}}}
     if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&(old.states[d.entity_id]?.last_updated!==v.states[d.entity_id]?.last_updated||old.states[d.entity_id]?.state!==v.states[d.entity_id]?.state)))this.liveDirty=true;
   }
   connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('locaris.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
@@ -232,7 +232,7 @@ class LocationPanel extends HTMLElement{
     else this.refresh();
     if(this.isConnected&&epoch===this.epoch){
       this.timer=setInterval(()=>this.refreshTick(),TIMING.REFRESH_TICK_MS);
-      this.visibilityHandler=()=>{if(!document.hidden){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&!this.historyLoading&&this._hass?.connected!==false)this.loadHistory();else this.drainHistoryAddresses();}}};
+      this.visibilityHandler=()=>{if(!document.hidden){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&!this.historyLoading&&this._hass?.connected!==false)this.loadHistory();else{this.loadHistory(true);this.drainHistoryAddresses();}}}};
       document.addEventListener('visibilitychange',this.visibilityHandler);
     }
   }
@@ -251,6 +251,7 @@ class LocationPanel extends HTMLElement{
     const interval=this.page==='live'?this.policyValue('live_refresh_seconds')*1000:this.page==='devices'?TIMING.DEVICE_REFRESH_MS:this.page==='history'?TIMING.HISTORY_REFRESH_MS:TIMING.SETTINGS_REFRESH_MS;
     const elapsed=now-this.lastRefreshAt;
     if(!this.refreshToken&&(elapsed>=interval||(this.page==='live'&&this.liveDirty&&elapsed>=TIMING.LIVE_DIRTY_MS)))this.refresh();
+    if(this.page==='history'&&!this.historyLoading){const day=this.querySelector('[data-history-date]')?.value,today=new Date();today.setHours(0,0,0,0);const pending=['queued','importing','syncing','retry'].includes(this.historySyncStatus);const delay=pending?TIMING.HISTORY_PENDING_MS:day&&new Date(day+'T00:00:00').getTime()===today.getTime()?TIMING.HISTORY_TODAY_MS:TIMING.HISTORY_PAST_MS;if(now-(this.lastHistoryQuery||0)>=delay)this.loadHistory(true);}
     this.refreshMapSession();
   }
   status(s='',retry){const n=this.querySelector('.lx-error');if(!n)return;n.replaceChildren();n.hidden=!s;if(s){n.append(el('span',s));if(retry)n.append(button('重试',retry));}}
@@ -288,7 +289,7 @@ class LocationPanel extends HTMLElement{
   }
   releaseHistory(){
     this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyTimelineGroups=null;
-    this.historyResolved=null;this.historyFailed=null;this.historyFlags=null;this.historyRegroup=null;this.historyLoading=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.selectedHistoryIndex=null;
+    this.historyResolved=null;this.historyFailed=null;this.historyFlags=null;this.historyRegroup=null;this.historyLoading=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.selectedHistoryIndex=null;this.historyRevision=null;this.historyQueryKey=null;this.historySyncStatus=null;this.historyLimit=50;this.lastHistoryQuery=0;this.historyTruncated=false;
   }
   closeHistoryCalendar(){
     if(this.calendarOutside){document.removeEventListener('pointerdown',this.calendarOutside,true);this.calendarOutside=null;}
@@ -564,30 +565,57 @@ class LocationPanel extends HTMLElement{
       if(item.selected!==selected){item.selected=selected;item.dot.classList.toggle('lx-track-selected',selected);item.marker.setzIndex?.(selected?200:120);}
     }
   }
-  async loadHistory(){
+  updateHistorySync(timeline){
+    const status=this.historySyncStatus,hasPoints=!!this.historyData?.length;
+    const labels={queued:'等待导入历史定位记录…',importing:'正在导入历史定位记录…',syncing:'正在同步历史定位记录…',retry:'历史记录同步中，等待重试…'};
+    const message=labels[status]||(!hasPoints?(status==='disabled'?'历史记录未开启':'当日暂无定位记录'):'');
+    let node=timeline.querySelector('[data-history-sync]');
+    if(!message){node?.remove();return;}
+    if(!node){node=el('div');node.dataset.historySync='1';node.setAttribute('role','status');timeline.insertBefore(node,timeline.querySelector('.lx-list-scroll'));}
+    node.className=hasPoints?'lx-muted':'lx-state lx-muted';if(node.textContent!==message)node.textContent=message;
+  }
+  async loadHistory(incremental=false){
     const select=this.querySelector('.lx-history-filter select'),day=this.querySelector('[data-history-date]'),timeline=this.querySelector('#history-timeline');
     if(!select||!day||!timeline||!this._hass?.user?.is_admin)return;
-    this.stopHistoryAddresses();this.historyResolved=new Map();this.historyFailed=new Set();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyLoading=null;this.historyFlags=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.paintHistory();
-    timeline.replaceChildren(el('h2','定位时间轴'));
-    if(!select.value||!day.value){timeline.append(this.stateView(this.data?'暂无可查询设备':this.dataError||'正在读取设备…'));return;}
-    if(this._hass.connected===false){timeline.append(this.stateView('HA 连接已断开'));return;}
-    const start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
-    timeline.append(this.stateView('正在加载…'));this.historyLoading=seq;
+    const entity=select.value,start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
+    const key=JSON.stringify([entity,day.value]);
+    if(incremental&&this.historyLoading)return;
+    incremental=incremental&&this.historyQueryKey===key&&Array.isArray(this.historyData);
+    if(!incremental){
+      this.stopHistoryAddresses();this.releaseHistory();this.historyResolved=new Map();this.historyFailed=new Set();this.paintHistory();
+      timeline.replaceChildren(el('h2','定位时间轴'));
+      if(!entity||!day.value){timeline.append(this.stateView(this.data?'暂无可查询设备':this.dataError||'正在读取设备…'));return;}
+      if(this._hass.connected===false){timeline.append(this.stateView('HA 连接已断开'));return;}
+      timeline.append(this.stateView('正在加载…'));
+    }
+    if(!entity||!day.value||this._hass.connected===false)return;
+    const requestSeq=this.historySeq,token={};this.historyLoading=token;this.lastHistoryQuery=Date.now();
     try{
-      const r=await this._hass.callWS({type:NS+'history',entity_id:select.value,start:start.getTime(),end:end.getTime(),collapse_repeated:false});
-      if(this.page!=='history'||seq!==this.historySeq||!timeline.isConnected)return;
-      this.historyData=r.points;this.historyFlags=this.historyQuality(r.points);
+      const r=await this._hass.callWS({type:NS+'history',entity_id:entity,start:start.getTime(),end:end.getTime(),collapse_repeated:false,...(incremental&&this.historyRevision?{known_revision:this.historyRevision}:{})});
+      if(this.page!=='history'||requestSeq!==this.historySeq||!timeline.isConnected||this.historyLoading!==token||!this._hass?.user?.is_admin||this._hass.connected===false)return;
+      this.historyRevision=r.revision;this.historyQueryKey=key;this.historySyncStatus=r.sync_status;
+      if(incremental&&(r.unchanged||(JSON.stringify(r.points)===JSON.stringify(this.historyData)&&!!r.truncated===this.historyTruncated))){this.updateHistorySync(timeline);return;}
+      const previous=incremental?this.historyData:[],oldByTime=new Map(previous.map(p=>[p.recorded_at,p])),selected=incremental?previous[this.selectedHistoryIndex]?.recorded_at:null;
+      const scroll=incremental?(timeline.querySelector('.lx-list-scroll')?.scrollTop||0):0,oldLimit=incremental?this.historyLimit:50;
+      const retained=p=>{const old=oldByTime.get(p.recorded_at);return old&&old.latitude===p.latitude&&old.longitude===p.longitude&&old.accuracy===p.accuracy;};
+      const keep=new Set(r.points.filter(retained).map(p=>p.recorded_at));
+      this.historyResolved=new Map([...(this.historyResolved||[])].filter(([t])=>keep.has(t)));
+      this.historyFailed=new Set([...(this.historyFailed||[])].filter(t=>keep.has(t)));
+      this.stopHistoryAddresses();const seq=this.historySeq=(this.historySeq||0)+1;
+      this.historyRegroup=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.historyTimelineGroups=null;
+      this.selectedHistoryIndex=selected==null?null:r.points.findIndex(p=>p.recorded_at===selected&&retained(p));if(this.selectedHistoryIndex<0)this.selectedHistoryIndex=null;
+      this.historyData=r.points;this.historyTruncated=!!r.truncated;this.historyFlags=this.historyQuality(r.points);
       const title=el('div',undefined,'lx-title'),count=el('span','','lx-muted');title.dataset.historyLegend='1';title.title=this.historyLegend();count.title='位置为连续位置分组，记录为数据库中实际存储的定位记录';title.append(el('h2','定位时间轴'),count);timeline.replaceChildren(title);
-      if(!r.points.length)timeline.append(this.stateView('当日暂无定位记录'));
-      let shown=0,expanded=null,groups=this.historyGroups(r.points),limit=50,rendering=false;
+      let shown=0,expanded=null,groups=this.historyGroups(r.points),limit=oldLimit||50,rendering=false;
+      const selectedGroup=groups.findIndex(g=>g.includes(this.selectedHistoryIndex));if(selectedGroup>=limit)limit=Math.ceil((selectedGroup+1)/50)*50;this.historyLimit=limit;
       const updateCount=()=>{count.textContent=groups.length+' 个位置 · '+r.points.length+' 条记录'+(r.truncated?' · 已截断':'');};updateCount();
       const coordByTime=new Map(),timesByCoord=new Map();for(const p of r.points){const key=p.latitude+','+p.longitude;coordByTime.set(p.recorded_at,key);if(!timesByCoord.has(key))timesByCoord.set(key,[]);timesByCoord.get(key).push(p.recorded_at);}
-      const entity=select.value,watchAddress=this.watchHistoryAddresses(entity,seq);
-      const body=el('div',undefined,'lx-list-scroll');timeline.append(body);
+      const watchAddress=this.watchHistoryAddresses(entity,seq);
+      const body=el('div',undefined,'lx-list-scroll');timeline.append(body);this.updateHistorySync(timeline);
       const timeOnly=t=>new Date(t).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
       const close=(restore=false)=>{if(!expanded)return;expanded.row.setAttribute('aria-expanded','false');expanded.card.classList.remove('lx-point-open');expanded.arrow.textContent='⌄';this.animatePoint(expanded.detail,false);expanded=null;if(restore){this.selectHistoryMarker(null);this.fitHistory();}};
       this.closeHistoryPoint=()=>close(false);
-      const more=button('显示更多',()=>{limit+=50;render(true);});
+      const more=button('显示更多',()=>{limit+=50;this.historyLimit=limit;render(true);});
       const render=(appendOnly=false)=>{
         if(rendering||seq!==this.historySeq||!body.isConnected)return;
         rendering=true;
@@ -622,13 +650,13 @@ class LocationPanel extends HTMLElement{
         const next=this.historyGroups(r.points);
         if(JSON.stringify(next)===JSON.stringify(groups)){for(const node of body.querySelectorAll('.lx-group-address')){const addr=this.historyResolved.get(node._lxRecordedAt);if(addr)node.textContent=addr;}return;}
         groups=next;this.historyTimelineGroups=groups;updateCount();
-        const active=this.selectedHistoryIndex;if(active!=null){const g=groups.findIndex(v=>v.includes(active));if(g>=limit)limit=g+1;}
+        const active=this.selectedHistoryIndex;if(active!=null){const g=groups.findIndex(v=>v.includes(active));if(g>=limit){limit=g+1;this.historyLimit=limit;}}
         render();this.paintHistory(false);
       };
-      this.historyTimelineGroups=groups;render();
-      this.openHistoryPoint=i=>{if(seq!==this.historySeq||!body.isConnected)return;const g=groups.findIndex(v=>v.includes(i));if(g<0)return;if(g>=limit){limit=Math.ceil((g+1)/50)*50;render(true);}const row=body.querySelector('[data-group-start="'+groups[g][0]+'"]');if(row){row.openPoint(i);this.revealInList(body,row);}};
-      this.paintHistory();
-    }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),this.stateView('历史轨迹查询失败',()=>this.loadHistory()));}finally{if(this.historyLoading===seq)this.historyLoading=null;}
+      this.historyTimelineGroups=groups;render();body.scrollTop=scroll;
+      this.openHistoryPoint=i=>{if(seq!==this.historySeq||!body.isConnected)return;const g=groups.findIndex(v=>v.includes(i));if(g<0)return;if(g>=limit){limit=Math.ceil((g+1)/50)*50;this.historyLimit=limit;render(true);}const row=body.querySelector('[data-group-start="'+groups[g][0]+'"]');if(row){row.openPoint(i);this.revealInList(body,row);}};
+      this.paintHistory(!incremental||!previous.length&&!!r.points.length);
+    }catch(e){if(this.historyLoading===token&&timeline.isConnected&&this.page==='history'){if(!incremental||['invalid_device','not_loaded','unauthorized'].includes(e?.code)){this.stopHistoryAddresses();this.releaseHistory();this.paintHistory(false);timeline.replaceChildren(el('h2','定位时间轴'),this.stateView('历史轨迹查询失败',()=>this.loadHistory()));}else{let warning=timeline.querySelector('[data-history-sync]');if(!warning){warning=el('div',undefined,'lx-muted');warning.dataset.historySync='1';timeline.insertBefore(warning,timeline.querySelector('.lx-list-scroll'));}warning.textContent='历史记录同步暂不可用，稍后自动重试';}}}finally{if(this.historyLoading===token)this.historyLoading=null;}
   }
   animatePoint(detail,open){
     if(detail._lxAnimation){detail._lxAnimation.cancel();detail._lxAnimation=null;}
