@@ -26,7 +26,7 @@ class Store:
         return {"revision": self.revision, "sync_status": self.status}
     async def run(self, fn):
         self.calls += 1
-        return ([{"recorded_at": 100}], 0, False)
+        return ([{"recorded_at": 100}], 0, False, None)
 
 class HistoryProtocolTest(unittest.IsolatedAsyncioTestCase):
     async def test_conditional_request_skips_sql_but_updates_status(self):

@@ -2,7 +2,6 @@
 import asyncio
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 import logging
 import json
 import math
@@ -10,8 +9,7 @@ from pathlib import Path
 import sqlite3
 import time
 
-from .history_logic import (recorder_daily_changes, day_bounds, prepare_daily_replay,
-                            prune_provisional_anchors)
+from .history_logic import recorder_changes, migrate_change_only, compact_repeated
 from .history_sync import HistorySync
 from .live_position_clock import LivePositionClock, last_recorded_change
 from .const import (WINDOW, HISTORY_RETENTION_DAYS, DAY_MS,
@@ -76,8 +74,6 @@ class Store:
         self.generations = {}
         self.live_clock = LivePositionClock()
         self.last_valid = {}
-        self.last_valid_days = {}
-        self.day_zone = ZoneInfo(hass.config.time_zone or 'UTC')
         self.initialized = False
         self.unsub = None
         self.timer = None
@@ -159,7 +155,18 @@ class Store:
         self.excluded = {e for e, excluded in management if excluded}
         self.devices = set(recording) & self.managed
         await self.load_policy()
-        await self.run(prepare_daily_replay, sorted(self.devices), now_ms()-WINDOW)
+        self.history_sync.pruned(await self.run(migrate_change_only, sorted(self.devices), now_ms()-WINDOW))
+        # A persisted predecessor prevents a restart from creating a fresh anchor.
+        def baselines(con):
+            values = {}
+            for entity in self.devices:
+                row = con.execute("SELECT latitude,longitude,accuracy FROM locaris_locations "
+                                  "WHERE entity_id=? AND recorded_at>=MAX(?,(SELECT import_from FROM locaris_devices WHERE entity_id=?)) "
+                                  "ORDER BY recorded_at DESC LIMIT 1", (entity, now_ms()-WINDOW, entity)).fetchone()
+                if row is not None:
+                    values[entity] = tuple(row)
+            return values
+        self.last_valid.update(await self.run(baselines))
         await self.discover()
         await self.cleanup()
         for entity in self.managed:
@@ -330,7 +337,6 @@ class Store:
         self.generations[entity] = self.generations.get(entity, 0) + 1
         self.history_sync.invalidate(entity)
         self.last_valid.pop(entity, None)
-        self.last_valid_days.pop(entity, None)
         self.retry_import.pop(entity, None)
         self.recovery_from.pop(entity, None)
         self.backfill_pending.pop(entity, None)
@@ -403,10 +409,6 @@ class Store:
                 self.warn("Location listener replacement deferred")
                 return
         if self.active and self.devices:
-            for entity in self.devices:
-                p = position(self.hass.states.get(entity))
-                if p is not None:
-                    self.last_valid.setdefault(entity, p)
             self.unsub = async_track_state_change_event(self.hass, list(self.devices), self.changed)
 
     @callback
@@ -420,25 +422,21 @@ class Store:
         p = point(new)
         if p is None:
             return
-        previous = position(old)
-        if previous is None:
-            previous = self.last_valid.get(entity)
+        previous = self.last_valid.get(entity)
+        old_payload = position(old)
         self.last_valid[entity] = p[1:]
-        # First actual valid state event per local day is eligible even
-        # without movement. The database rejects already-covered daily anchors.
-        day = day_bounds(p[0], self.day_zone)[0]
-        first_today = self.last_valid_days.get(entity) != day
-        self.last_valid_days[entity] = day
-        changed = previous is not None and previous != p[1:]
-        if not changed and not first_today:
+        # Preserve an actual transition even if the persisted predecessor
+        # happens to match the new payload (an intervening point may be pending).
+        actual_change = old_payload is not None and old_payload != p[1:]
+        if previous == p[1:] and not actual_change:
             return
-        daily_only = not changed
+        initial = not actual_change and (previous is None or old_payload is not None)
         generation = self.generations.get(entity, 0)
         if self.pending_writes >= 256:
             self.defer_backfill(entity, generation, p[0])
             self.warn("Location write queue full; Recorder recovery requested (no coordinates logged)")
             return
-        task = self.spawn(self.write(entity, p, generation, daily_only))
+        task = self.spawn(self.write(entity, p, generation, initial))
         if task is None:
             self.defer_backfill(entity, generation, p[0])
             return
@@ -450,39 +448,38 @@ class Store:
         self.pending_writes = max(0, self.pending_writes - 1)
 
     @staticmethod
-    def insert(con, entity, rows, source, cursor=None, tz=timezone.utc):
+    def insert(con, entity, rows, source, cursor=None):
         device = con.execute("SELECT import_from FROM locaris_devices WHERE entity_id=?", (entity,)).fetchone()
         if device is None:
             return 0
         now = now_ms()
         cutoff = max(now - WINDOW, device["import_from"])
         before = con.total_changes
-        eligible = [p for p in rows if cutoff <= p[0] <= now]
-        if source == "state_change_daily":
-            for p in eligible:
-                start, _ = day_bounds(p[0], tz)
-                if con.execute("SELECT 1 FROM locaris_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<=? LIMIT 1",
-                               (entity, max(start, cutoff), p[0])).fetchone() is None:
-                    con.execute("INSERT OR IGNORE INTO locaris_locations VALUES (?,?,?,?,?,?)", (entity, *p, source))
-        else:
-            con.executemany("INSERT OR IGNORE INTO locaris_locations VALUES (?,?,?,?,?,?)",
-                            [(entity, *p, source) for p in eligible])
+        eligible = sorted((p for p in rows if cutoff <= p[0] <= now), key=lambda p: p[0])
+        for p in eligible:
+            if source == "state_change_initial":
+                prior = con.execute("SELECT latitude,longitude,accuracy FROM locaris_locations "
+                                    "WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at DESC LIMIT 1",
+                                    (entity, cutoff, p[0])).fetchone()
+                if prior is not None and tuple(prior) == tuple(p[1:]):
+                    continue
+            con.execute("INSERT OR IGNORE INTO locaris_locations VALUES (?,?,?,?,?,?)", (entity, *p, source))
         if source == "recorder" and eligible:
-            prune_provisional_anchors(con, entity, {day_bounds(p[0], tz) for p in eligible}, cutoff)
+            compact_repeated(con, entity, cutoff)
         count = con.total_changes - before
         if cursor is not None:
             con.execute("UPDATE locaris_devices SET history_cursor=MAX(history_cursor,?) WHERE entity_id=?", (cursor, entity))
         return count
 
-    async def write(self, entity, p, generation, daily_only=False):
+    async def write(self, entity, p, generation, initial=False):
         try:
             async with self.lock:
                 if self.active and self.ready and entity in self.devices and self.generations.get(entity, 0) == generation:
-                    count = await self.run(self.insert, entity, [p], "state_change_daily" if daily_only else "state_change", None, self.day_zone)
+                    count = await self.run(self.insert, entity, [p], "state_change_initial" if initial else "state_change")
                     self.history_sync.changed(entity, count)
         except Exception:
             self.defer_backfill(entity, generation, p[0])
-            self.warn("Location probe write failed (no coordinates logged)")
+            self.warn("Location write failed (no coordinates logged)")
 
     async def enable(self, entity, import_history):
         state = self.hass.states.get(entity)
@@ -559,7 +556,6 @@ class Store:
             # Without a known in-consent predecessor, retain the first real
             # sample as an anchor instead of trusting a synthetic prior state.
             previous = None
-            previous_day = None
             async with self.lock:
                 if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
                     return
@@ -568,7 +564,6 @@ class Store:
                     (entity, earliest, start)).fetchone())
                 if baseline is not None:
                     previous = tuple(baseline)[1:]
-                    previous_day = day_bounds(baseline[0], self.day_zone)[0]
             while start < end and self.active and self.generations.get(entity, 0) == generation:
                 stop = min(start + DAY_MS, end)
                 begin_dt = datetime.fromtimestamp((start - RECORDER_BOUNDARY_MS) / 1000, timezone.utc)
@@ -580,12 +575,11 @@ class Store:
                     # A synthetic start state is stamped at begin_dt (start-1).
                     # It is comparison context only, never a new stored sample.
                     # Do not seed from before the current recording permission.
-                    return recorder_daily_changes(result.get(entity, []), start, stop,
-                                                   previous, earliest, point, previous_day, self.day_zone)
+                    return recorder_changes(result.get(entity, []), start, stop, previous, earliest, point)
                 if not self.recorder_available(recorder):
                     self.defer_backfill(entity, generation)
                     return
-                rows, previous, previous_day = await recorder.async_add_executor_job(read)
+                rows, previous = await recorder.async_add_executor_job(read)
                 if not self.recorder_available(recorder):
                     self.defer_backfill(entity, generation)
                     return
@@ -598,7 +592,7 @@ class Store:
                     if not self.recorder_available(recorder):
                         self.defer_backfill(entity, generation)
                         return
-                    count = await self.run(self.insert, entity, rows, "recorder", stop, self.day_zone)
+                    count = await self.run(self.insert, entity, rows, "recorder", stop)
                     self.history_sync.changed(entity, count)
                 start = stop
             if self.active and entity in self.devices and self.generations.get(entity, 0) == generation and recovery is not None:
@@ -740,5 +734,4 @@ class Store:
             self.backfill_pending.clear()
             self.live_clock.clear()
             self.last_valid.clear()
-            self.last_valid_days.clear()
             self.warning_times.clear()

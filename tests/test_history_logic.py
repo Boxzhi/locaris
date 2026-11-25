@@ -24,21 +24,16 @@ class HistoryLogicTest(unittest.TestCase):
         second, prev = logic.recorder_changes([(10, 1, 2, 3), None, (11, 2, 3, 4), (12, 1, 2, 3), (13, 1, 2, 4)], 10, 20, prev, 0, lambda x: x)
         self.assertEqual(first+second, [(1, 1, 2, 3), (11, 2, 3, 4), (12, 1, 2, 3), (13, 1, 2, 4)])
 
-    def test_daily_anchors_and_synthetic_boundary(self):
+    def test_cross_day_unchanged_not_written(self):
         tz=ZoneInfo("Asia/Shanghai")
         start=int(datetime(2026,11,25,tzinfo=tz).timestamp()*1000)
         prev=(1,2,3)
-        rows, previous, day=logic.recorder_daily_changes(
+        rows, previous=logic.recorder_changes(
             [(start-1,*prev),(start+100,*prev),(start+200,*prev),(start+300,1,2,4)],
-            start,start+1000,prev,0,lambda x:x,start-86400000,tz)
-        self.assertEqual(rows,[(start+100,*prev),(start+300,1,2,4)])
-        self.assertEqual(day,start)
-        rows, _, _=logic.recorder_daily_changes([(start+1000,1,2,4)],start+1000,start+2000,
-            previous,0,lambda x:x,day,tz)
+            start,start+1000,prev,0,lambda x:x)
+        self.assertEqual(rows,[(start+300,1,2,4)])
+        rows, _=logic.recorder_changes([(start+86400000+500,1,2,4)],start+86400000,start+86400000+1000,previous,0,lambda x:x)
         self.assertEqual(rows,[])
-        rows, _, _=logic.recorder_daily_changes([(start+86400000-1,1,2,4),(start+86400000+500,1,2,4)],
-            start+86400000,start+86400000+1000,previous,0,lambda x:x,day,tz)
-        self.assertEqual(rows,[(start+86400000+500,1,2,4)])
 
     def test_dst_day_bounds(self):
         tz=ZoneInfo("America/New_York")
@@ -47,26 +42,35 @@ class HistoryLogicTest(unittest.TestCase):
             lo,hi=logic.day_bounds(stamp,tz)
             self.assertEqual(hi-lo,hours*3600000)
 
-    def test_one_time_replay_respects_consent_and_disabled_devices(self):
+    def test_one_time_cleanup_respects_current_consent_and_real_transitions(self):
         con=sqlite3.connect(":memory:")
         self.addCleanup(con.close)
         con.executescript("CREATE TABLE locaris_metadata(key TEXT PRIMARY KEY,value TEXT);"
                           "CREATE TABLE locaris_devices(entity_id TEXT PRIMARY KEY,import_from INTEGER,history_cursor INTEGER);"
-                          "INSERT INTO locaris_devices VALUES ('a',100,900),('b',600,900),('c',100,900);")
-        self.assertTrue(logic.prepare_daily_replay(con,['a','b'],500))
-        self.assertEqual(con.execute("SELECT history_cursor FROM locaris_devices ORDER BY entity_id").fetchall(),[(500,),(600,),(900,)])
-        con.execute("UPDATE locaris_devices SET history_cursor=950")
-        self.assertFalse(logic.prepare_daily_replay(con,['a','b'],500))
-        self.assertEqual(con.execute("SELECT history_cursor FROM locaris_devices ORDER BY entity_id").fetchall(),[(950,),(950,),(950,)])
+                          "CREATE TABLE locaris_locations(entity_id TEXT,recorded_at INTEGER,latitude REAL,longitude REAL,accuracy REAL,source TEXT);"
+                          "INSERT INTO locaris_devices VALUES ('a',15,900),('b',0,900);"
+                          "INSERT INTO locaris_locations VALUES ('a',10,1,2,3,'recorder'),('a',20,1,2,3,'recorder'),('a',30,1,2,3,'state_change_daily'),('a',40,1,2,4,'state_change'),('a',50,1,2,4,'recorder'),('a',60,1,2,3,'state_change'),('a',70,1,2,3,'state_change'),('b',20,1,2,3,'recorder'),('b',30,1,2,3,'recorder');")
+        self.assertEqual(logic.migrate_change_only(con,['a'],0),2)
+        self.assertEqual(con.execute("SELECT recorded_at FROM locaris_locations WHERE entity_id='a' ORDER BY recorded_at").fetchall(),[(10,),(20,),(40,),(60,),(70,)])
+        self.assertEqual(con.execute("SELECT count(*) FROM locaris_locations WHERE entity_id='b'").fetchone()[0],2)
+        self.assertEqual(logic.migrate_change_only(con,['a'],0),0)
+        self.assertEqual(con.execute("SELECT history_cursor FROM locaris_devices WHERE entity_id='a'").fetchone()[0],900)
 
-    def test_remove_only_redundant_provisional_anchors(self):
+    def test_reference_not_counted_and_no_cross_consent_or_retention(self):
         con=sqlite3.connect(":memory:")
         self.addCleanup(con.close)
-        con.executescript("CREATE TABLE locaris_locations(entity_id TEXT,recorded_at INTEGER,latitude REAL,longitude REAL,accuracy REAL,source TEXT);"
-                          "INSERT INTO locaris_locations VALUES ('a',10,1,2,3,'recorder'),('a',20,1,2,3,'state_change_daily'),('a',30,1,2,4,'state_change'),('a',40,1,2,4,'state_change_daily'),('a',50,1,2,5,'state_change_daily'),('b',20,1,2,3,'state_change_daily');")
-        logic.prune_provisional_anchors(con,'a',[(0,100)],0)
-        self.assertEqual(con.execute("SELECT recorded_at FROM locaris_locations WHERE entity_id='a' ORDER BY recorded_at").fetchall(),[(10,),(30,),(50,)])
-        self.assertEqual(con.execute("SELECT count(*) FROM locaris_locations WHERE entity_id='b'").fetchone()[0],1)
+        con.row_factory=sqlite3.Row
+        con.executescript("CREATE TABLE locaris_devices(entity_id TEXT PRIMARY KEY,import_from INTEGER);"
+                          "CREATE TABLE locaris_paused(entity_id TEXT PRIMARY KEY);"
+                          "CREATE TABLE locaris_locations(entity_id TEXT,recorded_at INTEGER,latitude REAL,longitude REAL,accuracy REAL,source TEXT);"
+                          "INSERT INTO locaris_devices VALUES ('a',15);"
+                          "INSERT INTO locaris_locations VALUES ('a',10,1,2,3,'recorder'),('a',20,1,2,4,'recorder'),('a',40,1,2,5,'state_change');")
+        self.assertEqual(logic.history_reference(con,'a',30,0)['recorded_at'],20)
+        self.assertIsNone(logic.history_reference(con,'a',20,0))
+        self.assertIsNone(logic.history_reference(con,'a',30,21))
+        con.execute("INSERT INTO locaris_paused VALUES ('a')")
+        self.assertIsNone(logic.history_reference(con,'a',30,0))
+        self.assertEqual(con.execute("SELECT count(*) FROM locaris_locations").fetchone()[0],3)
 
     def test_collapse_preserves_return_and_accuracy_change(self):
         a = dict(recorded_at=1, latitude=1, longitude=2, accuracy=3)

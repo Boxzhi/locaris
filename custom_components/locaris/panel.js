@@ -1,4 +1,4 @@
-const VERSION='0.2.9-preview';
+const VERSION='0.2.10-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,HISTORY_TODAY_MS:10000,HISTORY_PENDING_MS:5000,HISTORY_PAST_MS:60000,READ_TIMEOUT_MS:15000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:400,MAP_MEDIUM_MS:600,MAP_FAR_MS:800,MAP_LONG_MS:1000,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
@@ -377,7 +377,7 @@ class LocationPanel extends HTMLElement{
     finally{if(current()){this.refreshToken=null;this.drainRefresh();}}
   }
   releaseHistory(){
-    this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyTimelineGroups=null;
+    this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyReference=null;this.historyTimelineGroups=null;
     this.historyResolved=null;this.historyFailed=null;this.historyFlags=null;this.historyRegroup=null;this.historyLoading=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.selectedHistoryIndex=null;this.historyRevision=null;this.historyQueryKey=null;this.historySyncStatus=null;this.historyLimit=50;this.lastHistoryQuery=0;this.historyTruncated=false;
   }
   closeHistoryCalendar(){
@@ -662,7 +662,7 @@ class LocationPanel extends HTMLElement{
   updateHistorySync(timeline){
     const status=this.historySyncStatus,hasPoints=!!this.historyData?.length;
     const labels={queued:'等待导入历史定位记录…',importing:'正在导入历史定位记录…',syncing:'正在同步历史定位记录…',retry:'历史记录同步中，等待重试…'};
-    const message=labels[status]||(!hasPoints?(status==='disabled'?'历史记录未开启':'当日暂无定位记录'):'');
+    const message=labels[status]||(!hasPoints&&!this.historyReference?(status==='disabled'?'历史记录未开启':'当日暂无定位记录'):'');
     let node=timeline.querySelector('[data-history-sync]');
     if(!message){node?.remove();return;}
     if(!node){node=el('div');node.dataset.historySync='1';node.setAttribute('role','status');timeline.insertBefore(node,timeline.querySelector('.lx-list-scroll'));}
@@ -688,8 +688,8 @@ class LocationPanel extends HTMLElement{
       const r=await boundedRead(this._hass,{type:NS+'history',entity_id:entity,start:start.getTime(),end:end.getTime(),collapse_repeated:false,...(incremental&&this.historyRevision?{known_revision:this.historyRevision}:{})});
       if(this.page!=='history'||requestSeq!==this.historySeq||!timeline.isConnected||this.historyLoading!==token||!this._hass?.user?.is_admin||this._hass.connected===false)return;
       this.historyRevision=r.revision;this.historyQueryKey=key;this.historySyncStatus=r.sync_status;
-      if(incremental&&(r.unchanged||(JSON.stringify(r.points)===JSON.stringify(this.historyData)&&!!r.truncated===this.historyTruncated))){this.updateHistorySync(timeline);return;}
-      const previous=incremental?this.historyData:[],oldByTime=new Map(previous.map(p=>[p.recorded_at,p])),selected=incremental?previous[this.selectedHistoryIndex]?.recorded_at:null;
+      if(incremental&&(r.unchanged||(JSON.stringify(r.points)===JSON.stringify(this.historyData)&&JSON.stringify(r.reference||null)===JSON.stringify(this.historyReference||null)&&!!r.truncated===this.historyTruncated))){this.updateHistorySync(timeline);return;}
+      const previous=incremental?this.historyData:[],previousReference=this.historyReference,oldByTime=new Map(previous.map(p=>[p.recorded_at,p])),selected=incremental?previous[this.selectedHistoryIndex]?.recorded_at:null;
       const oldBody=incremental?timeline.querySelector('.lx-list-scroll'):null,scroll=oldBody?.scrollTop||0,oldLimit=incremental?this.historyLimit:50;
       const oldRect=oldBody?.getBoundingClientRect(),anchor=oldRect?[...oldBody.querySelectorAll('[data-group-start]')].find(row=>row.closest('.lx-point-card').getBoundingClientRect().bottom>oldRect.top):null;
       const anchorTime=anchor?previous[Number(anchor.dataset.groupStart)]?.recorded_at:null,anchorOffset=anchor?anchor.getBoundingClientRect().top-oldRect.top:0;
@@ -700,8 +700,18 @@ class LocationPanel extends HTMLElement{
       this.stopHistoryAddresses();const seq=this.historySeq=(this.historySeq||0)+1;
       this.historyRegroup=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.historyTimelineGroups=null;
       this.selectedHistoryIndex=selected==null?null:r.points.findIndex(p=>p.recorded_at===selected&&retained(p));if(this.selectedHistoryIndex<0)this.selectedHistoryIndex=null;
-      this.historyData=r.points;this.historyTruncated=!!r.truncated;this.historyFlags=this.historyQuality(r.points);
+      this.historyData=r.points;this.historyReference=r.reference||null;this.historyTruncated=!!r.truncated;this.historyFlags=this.historyQuality(r.points);
       const title=el('div',undefined,'lx-title'),count=el('span','','lx-muted');title.dataset.historyLegend='1';title.title=this.historyLegend();count.title='位置为连续位置分组，记录为数据库中实际存储的定位记录';title.append(el('h2','定位时间轴'),count);timeline.replaceChildren(title);
+      if(!r.points.length&&this.historyReference){
+        const p=this.historyReference,body=el('div',undefined,'lx-list-scroll'),card=el('div',undefined,'lx-point-card'),row=el('div',undefined,'lx-point-row'),info=el('span',undefined,'lx-point-label'),dot=el('span','·','lx-point-number');
+        count.textContent='0 个位置 · 0 条记录';count.title='参考位置不计入当日记录';
+        const address=el('span','地址待加载','lx-group-address');address._lxRecordedAt=p.recorded_at;
+        info.append(address,el('span','最后记录：'+fmt(p.recorded_at),'lx-muted lx-group-count'),el('span','当日无定位变化记录，仅供参考','lx-muted lx-group-count'));
+        row.append(dot,info);card.append(row);body.append(card);timeline.append(body);
+        this.historyRegroup=(at,value)=>{if(seq===this.historySeq&&at===p.recorded_at&&address.isConnected)address.textContent=value;};
+        this.watchHistoryAddresses(entity,seq)(address);this.updateHistorySync(timeline);
+        this.paintHistory(!incremental||!previousReference);return;
+      }
       let shown=0,expanded=null,groups=this.historyGroups(r.points),limit=oldLimit||50,rendering=false;
       const selectedGroup=groups.findIndex(g=>g.includes(this.selectedHistoryIndex)),anchorIndex=anchorTime==null?-1:r.points.findIndex(p=>p.recorded_at===anchorTime),anchorGroup=groups.findIndex(g=>g.includes(anchorIndex));const requiredGroup=Math.max(selectedGroup,anchorGroup);if(requiredGroup>=limit)limit=Math.ceil((requiredGroup+1)/50)*50;this.historyLimit=limit;
       const updateCount=()=>{count.textContent=groups.length+' 个位置 · '+r.points.length+' 条记录'+(r.truncated?' · 已截断':'');};updateCount();
@@ -766,8 +776,9 @@ class LocationPanel extends HTMLElement{
     animation.onfinish=()=>{if(detail._lxAnimation!==animation)return;detail._lxAnimation=null;detail.style.overflow='';detail.hidden=!open;};
   }
   fitHistory(){
-    this.cancelCamera();if(!this.map||this.page!=='history'||!this.historyData?.length||!this.historyOverlays?.length)return;
-    this.fitCameraPoints(this.historyXY||this.historyData.map(p=>this.gcj(p.longitude,p.latitude)),16);
+    this.cancelCamera();if(!this.map||this.page!=='history'||!this.historyOverlays?.length)return;
+    if(!this.historyData?.length&&this.historyReference){const p=this.historyReference;this.fitCameraPoints([this.gcj(p.longitude,p.latitude)],16);return;}
+    if(this.historyData?.length)this.fitCameraPoints(this.historyXY||this.historyData.map(p=>this.gcj(p.longitude,p.latitude)),16);
   }
   paintHistory(adjustView=true){
     if(!this.map||this.page!=='history')return;
@@ -791,7 +802,16 @@ class LocationPanel extends HTMLElement{
         if(this.historyTrackOverlays.length)map.add(this.historyTrackOverlays);
       }
     }
-    if(!points.length)return;
+    if(!points.length){
+      const p=this.historyReference;
+      if(p){
+        const dot=el('div','·','lx-track-end lx-track-number');dot.style.background='#64748b';
+        const marker=new A.Marker({position:this.gcj(p.longitude,p.latitude),content:dot,anchor:'center',title:'此前定位（仅供参考）',zIndex:120});
+        if(this.historyOverlays?.length)map.remove(this.historyOverlays);
+        this.historyOverlays=[marker];map.add(marker);if(adjustView)this.fitHistory();
+      }
+      return;
+    }
     const xy=this.historyXY,groups=new Map(),previous=this.historyMarkerMap||new Map(),next=new Map(),added=[];
     const timelineGroups=this.historyTimelineGroups||this.historyGroups(points);
     for(let g=0;g<timelineGroups.length;g++){

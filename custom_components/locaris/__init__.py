@@ -16,7 +16,7 @@ import voluptuous as vol
 from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from .location_store import Store, position
-from .history_logic import collapse_history
+from .history_logic import collapse_history, history_reference
 from . import security
 from .runtime_policy import validate_patch
 from .data_cleanup import DELETE_ON_REMOVE, delete_on_remove, async_cleanup_entry
@@ -189,14 +189,19 @@ async def ws_history(hass, connection, msg):
         unchanged = msg.get("known_revision") == revision
         def read(con):
             sql = "SELECT recorded_at,latitude,longitude,accuracy FROM locaris_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at"
-            args = (entity,max(start,now_ms()-WINDOW),min(end,now_ms()+1))
+            now = now_ms()
+            cutoff = now-WINDOW
+            args = (entity,max(start,cutoff),min(end,now+1))
             if msg["collapse_repeated"]:
-                return collapse_history(con.execute(sql,args))
-            rows = con.execute(sql+" LIMIT 10001",args).fetchall()
-            return [dict(r) for r in rows[:10000]], 0, len(rows)>10000
+                points, hidden, truncated = collapse_history(con.execute(sql,args))
+            else:
+                rows = con.execute(sql+" LIMIT 10001",args).fetchall()
+                points, hidden, truncated = [dict(r) for r in rows[:10000]], 0, len(rows)>10000
+            reference = history_reference(con, entity, start, cutoff) if not points and cutoff <= start <= now else None
+            return points, hidden, truncated, reference
         try:
             if not unchanged:
-                rows, hidden, truncated = await store.run(read)
+                rows, hidden, truncated, reference = await store.run(read)
         except Exception:
             store.warn("Location history query failed (no coordinates logged)")
             connection.send_error(msg["id"], "history_failed", "History query failed")
@@ -206,7 +211,7 @@ async def ws_history(hass, connection, msg):
         return
     result = {"revision": revision, "sync_status": meta["sync_status"], "unchanged": unchanged}
     if not unchanged:
-        result.update(points=rows, truncated=truncated, collapsed=hidden)
+        result.update(points=rows, truncated=truncated, collapsed=hidden, reference=reference)
     connection.send_result(msg["id"], result)
 
 def gcj(lon, lat):
@@ -482,7 +487,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.9-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.10-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("entry_id", None)
