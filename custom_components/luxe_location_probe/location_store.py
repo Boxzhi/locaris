@@ -394,6 +394,8 @@ class Store:
                 (cutoff,)).fetchone()[0]
             return location_count, address_count
         async with self.lock:
+            if not self.active or not self.ready:
+                raise RuntimeError("Storage not ready")
             location_count, address_count = await self.run(read)
             size = await self.hass.async_add_executor_job(lambda: sum(p.stat().st_size for p in self.path.parent.glob("location.db*") if p.is_file()))
         return {"retention_days":30,"database_bytes":size,"last_cleanup":self.last_cleanup,"location_count":location_count,"address_cache_count":address_count}
@@ -406,7 +408,10 @@ class Store:
                 unsubscribe = getattr(self, name)
                 setattr(self, name, None)
                 if unsubscribe:
-                    unsubscribe()
+                    try:
+                        unsubscribe()
+                    except Exception:
+                        _LOGGER.warning("Location listener cleanup failed")
             if self.tasks:
                 await asyncio.gather(*list(self.tasks), return_exceptions=True)
             async with self.lock:
