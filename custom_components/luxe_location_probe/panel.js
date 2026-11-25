@@ -1,4 +1,4 @@
-const VERSION='0.1.32-preview';
+const VERSION='0.1.33-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -437,6 +437,13 @@ class LocationPanel extends HTMLElement{
     }
     return flags;
   }
+  historySegment(a,b,flagA,flagB){
+    const elapsed=b.recorded_at-a.recorded_at;
+    // A line connects samples; it is never a reconstructed road or actual path.
+    if(elapsed<=0)return 'break';
+    if(a.latitude===b.latitude&&a.longitude===b.longitude)return 'break';
+    return elapsed>30*60000||flagA?.suspect||flagB?.suspect?'dashed':'solid';
+  }
   historyGroups(points){
     const groups=[];let group=null,unique=null,counts=null,west=0,east=0,south=0,north=0;
     const rad=Math.PI/180;
@@ -483,7 +490,7 @@ class LocationPanel extends HTMLElement{
       const r=await this._hass.callWS({type:NS+'history',entity_id:select.value,start:start.getTime(),end:end.getTime(),collapse_repeated:true});
       if(this.page!=='history'||seq!==this.historySeq||!timeline.isConnected)return;
       this.historyData=r.points;this.historyFlags=this.historyQuality(r.points);
-      const title=el('div',undefined,'lx-title'),count=el('span',r.points.length+' 个定位点'+(r.truncated?' · 已截断':''),'lx-muted');if(r.collapsed)count.title='已合并 '+r.collapsed+' 条连续相同坐标及精度的记录，原始数据仍保留';title.append(el('h2','定位时间轴'),count);timeline.replaceChildren(title);
+      const title=el('div',undefined,'lx-title'),count=el('span',r.points.length+' 个定位点'+(r.truncated?' · 已截断':''),'lx-muted');title.title='地图连线仅连接已记录坐标，不代表实际行走路线；间隔超过30分钟或涉及疑似跳点时以虚线表示';if(r.collapsed)count.title='已合并 '+r.collapsed+' 条连续相同坐标及精度的记录，原始数据仍保留';title.append(el('h2','定位时间轴'),count);timeline.replaceChildren(title);
       if(!r.points.length)timeline.append(el('p','当日暂无定位记录','lx-muted'));
       let shown=0,expanded=null,groups=this.historyGroups(r.points),limit=50,rendering=false;
       const coordByTime=new Map(),timesByCoord=new Map();for(const p of r.points){const key=p.latitude+','+p.longitude;coordByTime.set(p.recorded_at,key);if(!timesByCoord.has(key))timesByCoord.set(key,[]);timesByCoord.get(key).push(p.recorded_at);}
@@ -558,12 +565,15 @@ class LocationPanel extends HTMLElement{
       this.historyXY=points.map(p=>this.gcj(p.longitude,p.latitude));
       const xy=this.historyXY;
       if(points.length){
-        let run=[xy[0]],dashed=null;
-        const flush=()=>{if(run.length>1)this.historyTrackOverlays.push(new A.Polyline({path:run,strokeColor:'#4387e8',strokeWeight:dashed?3:4,strokeOpacity:dashed?0.55:0.9,strokeStyle:dashed?'dashed':'solid',strokeDasharray:[8,6],lineJoin:'round',lineCap:'round',zIndex:10}));};
+        let run=[],style=null;
+        const flags=this.historyFlags||this.historyQuality(points);
+        const flush=()=>{if(run.length>1)this.historyTrackOverlays.push(new A.Polyline({path:run,strokeColor:'#4387e8',strokeWeight:style==='dashed'?3:4,strokeOpacity:style==='dashed'?0.55:0.9,strokeStyle:style,strokeDasharray:[8,6],lineJoin:'round',lineCap:'round',zIndex:10}));run=[];};
         for(let i=1;i<points.length;i++){
-          const gap=points[i].recorded_at-points[i-1].recorded_at>30*60000;
-          if(dashed!==null&&gap!==dashed){flush();run=[xy[i-1]];}
-          dashed=gap;run.push(xy[i]);
+          const next=this.historySegment(points[i-1],points[i],flags[i-1],flags[i]);
+          if(next==='break'){flush();style=null;continue;}
+          if(style!==next){flush();style=next;}
+          if(!run.length)run.push(xy[i-1]);
+          run.push(xy[i]);
         }flush();
         if(this.historyTrackOverlays.length)map.add(this.historyTrackOverlays);
       }
