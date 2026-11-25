@@ -4,15 +4,15 @@
 
 Home Assistant 独立位置中心。实时位置、历史轨迹、设备管理、运行策略；仅管理员访问，被动读取已有 GPS 定位。历史数据保留 30 天。地图及地址解析使用高德服务。
 
-> v0.2.0-preview 是独立迁移候选分支，尚未正式发布。不要作为现有 HACS 安装的常规更新。主分支仍保留原集成。
+> v0.2.1-preview 是独立迁移候选分支，尚未正式发布。不要作为现有 HACS 安装的常规更新。主分支仍保留原集成。
 
 ## 迁移与回退
 
-详见 [MIGRATION.md](MIGRATION.md)。现阶段采用明确的人工迁移流程，不直接编辑 HA 的 .storage 配置。数据库继续使用 /config/luxe_location/location.db。
+详见 [MIGRATION.md](MIGRATION.md)。卸载旧集成后重新添加 Locaris，首次启动安全复制旧 SQLite 数据库至 /config/locaris/location.db，保留旧库作为手动回退备份，不直接编辑 HA 内部配置。
 
 ## 品牌资源
 
-assets/ 保存已经确认的北极星 SVG。发布前执行 `python scripts/build_brand.py`（开发环境需 CairoSVG），并提交生成的 brand/ PNG。当前候选分支不包含生成的 PNG，不能作为品牌图标最终验收版本。
+assets/ 保存确认的北极星 SVG。发布前执行 `python scripts/build_brand.py`（开发环境需 CairoSVG），并提交生成的 brand/ PNG。当前候选分支不包含生成的 PNG，验收安装需要将品牌文件复制至 custom_components/locaris/brand/。
 
 ## 测试
 
