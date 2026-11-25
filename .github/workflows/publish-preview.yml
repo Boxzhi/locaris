@@ -1,0 +1,27 @@
+name: Publish Locaris v0.2.10-preview
+on:
+  push:
+    branches: ['release/v0.2.10-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.10-preview >/dev/null 2>&1; then exit 0; fi
+          cat > /tmp/notes.md <<'EOF'
+          ## 历史定位纯变化存储
+          - 取消每日首条定位基准，实时采集与 Recorder 补查均跨日连续去重。
+          - 保留首次有效定位及经纬度、GPS 精度变化。
+          - 无变化日期使用独立参考位置，不计入记录，不伪造时间。
+          - 升级时仅清理当前授权区间内可识别的重复旧记录，保留确认的实时变化及其他历史。
+          - 不修改 HA Recorder 或数据库结构。
+          - 新增实时事件过滤、数据库插入回归测试，更新跨日去重、授权边界及参考位置测试。CI 全部通过，实际 HA 环境待验收。
+          EOF
+          gh release create v0.2.10-preview --target 4f3c7fa6a75a424ff3a30e57bde02972b358a0af --title "Locaris v0.2.10-preview" --notes-file /tmp/notes.md --prerelease --latest=false
