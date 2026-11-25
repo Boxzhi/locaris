@@ -1,4 +1,4 @@
-const VERSION='0.1.20.1-preview';
+const VERSION='0.1.21-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -24,8 +24,8 @@ const icon=name=>{const paths={'mdi:menu':'M4 6h16M4 12h16M4 18h16','mdi:map-mar
 const button=(text,fn,cls)=>{const b=el('button',text,cls);b.type='button';b.onclick=fn;return b;};
 class LocationPanel extends HTMLElement{
   set hass(v){this._hass=v;if(this.isConnected&&this.viewportResize)this.syncHostLayout();if(this.isConnected&&!this.started)this.start();}
-  connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
-  disconnectedCallback(){this.epoch++;this.started=false;clearInterval(this.timer);this.liveListObserver?.disconnect();this.liveListObserver=null;this.stopViewport();this.closeHistoryCalendar();this.stopHistoryAddresses();this.destroyMap();}
+  connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.pendingActions=[];this.refreshToken=null;this.busy=false;this.refreshNeeded=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
+  disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.busy=false;this.refreshNeeded=false;this.data=null;clearInterval(this.timer);this.timer=null;this.liveListObserver?.disconnect();this.liveListObserver=null;this.stopViewport();this.closeHistoryCalendar();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
   render(){
     this.innerHTML=`<style>
     html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--primary-background-color,#131820);overscroll-behavior:none}luxe-location-probe{display:block;height:100vh;height:var(--lx-viewport,100dvh);width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--lx-host-bg,var(--primary-background-color,#131820));-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
@@ -154,14 +154,46 @@ class LocationPanel extends HTMLElement{
     if(this.hostThemeMedia?.removeEventListener)this.hostThemeMedia.removeEventListener('change',this.hostThemeChange);else this.hostThemeMedia?.removeListener?.(this.hostThemeChange);
     this.hostThemeMedia=null;this.hostThemeChange=null;this.restoreHostLayout();
   }
-  async start(){if(this.started)return;this.started=true;const epoch=this.epoch;if(!this._hass.user?.is_admin){this.status('仅管理员可访问');return;}if(this.page==='live'||this.page==='history')this.switchPage(this.page);await this.refresh();if(this.isConnected&&epoch===this.epoch)this.timer=setInterval(()=>{if(!document.hidden&&!this.busy)this.refresh();},15000);}
+  async start(){
+    if(this.started)return;
+    this.started=true;const epoch=this.epoch;
+    if(!this._hass.user?.is_admin){this.status('仅管理员可访问');return;}
+    if(this.page==='live'||this.page==='history')this.switchPage(this.page);
+    else this.refresh();
+    if(this.isConnected&&epoch===this.epoch)this.timer=setInterval(()=>{if(!document.hidden)this.refresh();},15000);
+  }
   status(s=''){const n=this.querySelector('.lx-error');if(n)n.textContent=s;}
-  async refresh(action='list',entity_id,delete_history=false){
-    if(this.busy||!this._hass?.user?.is_admin)return;
-    const epoch=this.epoch;this.busy=true;
-    try{const r=await this._hass.callWS({type:NS+'storage',action,...(entity_id?{entity_id}:{}),import_history:true,delete_history,include_position:this.page==='live'});if(!this.isConnected||epoch!==this.epoch)return;this.data=r;this.status();this.updateData();}
-    catch(e){if(this.isConnected&&epoch===this.epoch){this.status('操作失败：'+String(e.message||e));this.updateData();}}
-    finally{this.busy=false;}
+  refresh(action='list',entity_id,delete_history=false){
+    if(!this.isConnected||!this._hass?.user?.is_admin)return;
+    if(action==='list'){
+      if(this.refreshToken)return;
+      this.refreshNeeded=true;
+    }else{
+      const key=JSON.stringify([action,entity_id,delete_history]);
+      if(this.refreshToken?.key===key||this.pendingActions.some(v=>v.key===key))return;
+      this.pendingActions.push({action,entity_id,delete_history,key});
+    }
+    this.drainRefresh();
+  }
+  async drainRefresh(){
+    if(this.refreshToken||!this.isConnected||!this._hass?.user?.is_admin)return;
+    const job=this.pendingActions.shift()||(this.refreshNeeded?{action:'list'}:null);
+    if(!job)return;
+    this.refreshNeeded=false;
+    const epoch=this.epoch,token={key:job.key},live=this.page==='live';
+    this.refreshToken=token;this.busy=true;
+    const current=()=>this.isConnected&&this.epoch===epoch&&this.refreshToken===token;
+    try{
+      const r=await this._hass.callWS({type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live});
+      if(!current())return;
+      if(live!==(this.page==='live')){this.refreshNeeded=true;return;}
+      this.data=r;this.status();this.updateData();
+    }catch(e){if(current()){this.status('操作失败：'+String(e.message||e));}}
+    finally{if(current()){this.refreshToken=null;this.busy=false;this.drainRefresh();}}
+  }
+  releaseHistory(){
+    this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyTimelineGroups=null;
+    this.historyResolved=null;this.historyRegroup=null;this.openHistoryPoint=null;this.selectedHistoryIndex=null;
   }
   closeHistoryCalendar(){
     if(this.calendarOutside){document.removeEventListener('pointerdown',this.calendarOutside,true);this.calendarOutside=null;}
@@ -169,15 +201,16 @@ class LocationPanel extends HTMLElement{
   }
   switchPage(page){
     this.closeHistoryCalendar();
-    this.stopHistoryAddresses();this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveSelected=null;this.page=page;this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.destroyMap();
+    this.stopHistoryAddresses();this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveSelected=null;this.page=page;this.releaseHistory();this.destroyMap();
     for(const b of this.querySelectorAll('[data-page]'))b.setAttribute('aria-selected',String(b.dataset.page===page));
     const main=this.querySelector('.lx-content');main.replaceChildren();main.classList.toggle('lx-map-page',page==='live'||page==='history');
     if(page==='live'||page==='history'){
       const layout=el('div',undefined,'lx-map-layout'),side=el('aside',undefined,'lx-side'),map=el('div',undefined,'lx-map'),target=el('div',undefined,'lx-map-inner'),tools=el('div',undefined,'lx-map-tools');
       const details=el('details'),summary=el('summary');summary.setAttribute('aria-label','地图图层');summary.append(icon('layers'));details.append(summary);for(const [id,label] of [['standard','标准'],['satellite','卫星'],['dark','深色']]){const b=button(label,()=>{this.layer(id);details.open=false;});b.dataset.layer=id;b.setAttribute('aria-pressed',String(id===(this.mapLayer||'standard')));details.append(b);}tools.append(details);if(page==='live'){const fit=button(undefined,()=>{this.liveSelected=null;this.fitMarkers();this.clusterLive();this.drawSide();});fit.setAttribute('aria-label','显示全部位置');fit.append(icon('locate'));tools.append(fit);}
       layout.dataset.mode=page;map.append(target,tools,this.menuButton());layout.append(side,map);main.append(layout);this.drawSide();
-      if(this._hass?.user?.is_admin){this.buildMap(target);if(page==='live'&&this.started&&!this.busy)this.refresh();}
+      if(this.started&&this._hass?.user?.is_admin)this.buildMap(target);
     }else this.drawData();
+    if(this.started){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();}
   }
   updateData(){if(this.page==='live'){this.drawSide();this.syncMarkers();}else if(this.page==='history'){if(!this.querySelector('.lx-history-filter select')?.options.length)this.drawSide();}else this.drawData();}
   drawSide(){
@@ -254,7 +287,7 @@ class LocationPanel extends HTMLElement{
     }
   }
   async buildMap(target){
-    try{const c=await this._hass.callWS({type:NS+'config'}),A=await sdk(c);if(!this.isConnected||!target.isConnected)return;this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});if(this.page==='live'){this.map.on('zoomend',()=>this.clusterLive());this.map.on('moveend',()=>this.clusterLive());this.map.on('dragstart',()=>{this.cancelCamera();this.liveExpanded=null;});}this.layer(this.mapLayer||'standard');if(this.page==='live')this.syncMarkers();else this.paintHistory();}
+    try{const A=await (sdkPromise||sdk(await this._hass.callWS({type:NS+'config'})));if(!this.isConnected||!target.isConnected)return;this.A=A;this.map=new A.Map(target,{zoom:5,viewMode:'2D',resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});if(this.page==='live'){this.map.on('zoomend',()=>this.clusterLive());this.map.on('moveend',()=>this.clusterLive());this.map.on('dragstart',()=>{this.cancelCamera();this.liveExpanded=null;});}this.layer(this.mapLayer||'standard');if(this.page==='live')this.syncMarkers();else this.paintHistory();}
     catch(e){if(target.isConnected)this.status('地图加载失败：'+String(e.message||e));}
   }
   destroyMap(){this.cancelCamera();this.liveExpanded=null;this.liveClusters=[];this.historyOverlays=[];this.historyNumberMarkers=[];this.markers=new Map();this.didFit=false;if(this.map){this.map.destroy();this.map=null;}}
@@ -387,7 +420,7 @@ class LocationPanel extends HTMLElement{
         const known=new Map();for(const p of r.points){const addr=this.historyResolved.get(p.recorded_at);if(addr)known.set(p.latitude+','+p.longitude,addr);}
         for(const p of r.points){const addr=known.get(p.latitude+','+p.longitude);if(addr)this.historyResolved.set(p.recorded_at,addr);}
         const next=this.historyGroups(r.points);
-        if(JSON.stringify(next)===JSON.stringify(groups))return;
+        if(JSON.stringify(next)===JSON.stringify(groups)){for(const node of body.querySelectorAll('.lx-group-address')){const addr=this.historyResolved.get(node._lxRecordedAt);if(addr)node.textContent=addr;}return;}
         groups=next;this.historyTimelineGroups=groups;
         const active=this.selectedHistoryIndex;if(active!=null){const g=groups.findIndex(v=>v.includes(active));if(g>=limit)limit=g+1;}
         render();this.paintHistory(false);
