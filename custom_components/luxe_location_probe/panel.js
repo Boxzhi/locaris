@@ -1,4 +1,4 @@
-const VERSION='0.1.36.1-preview';
+const VERSION='0.1.37-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -223,7 +223,7 @@ class LocationPanel extends HTMLElement{
   }
   releaseHistory(){
     this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyTimelineGroups=null;
-    this.historyResolved=null;this.historyFailed=null;this.historyFlags=null;this.historyRegroup=null;this.openHistoryPoint=null;this.selectedHistoryIndex=null;
+    this.historyResolved=null;this.historyFailed=null;this.historyFlags=null;this.historyRegroup=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.selectedHistoryIndex=null;
   }
   closeHistoryCalendar(){
     if(this.calendarOutside){document.removeEventListener('pointerdown',this.calendarOutside,true);this.calendarOutside=null;}
@@ -249,7 +249,7 @@ class LocationPanel extends HTMLElement{
     const main=this.querySelector('.lx-content');main.replaceChildren();main.classList.toggle('lx-map-page',page==='live'||page==='history');
     if(page==='live'||page==='history'){
       const layout=el('div',undefined,'lx-map-layout'),side=el('aside',undefined,'lx-side'),map=el('div',undefined,'lx-map'),target=el('div',undefined,'lx-map-inner'),tools=el('div',undefined,'lx-map-tools');
-      const details=el('details'),summary=el('summary');summary.setAttribute('aria-label','地图图层');summary.append(icon('layers'));details.append(summary);for(const [id,label] of [['standard','标准'],['satellite','卫星'],['dark','深色']]){const b=button(label,()=>{this.layer(id);details.open=false;});b.dataset.layer=id;b.setAttribute('aria-pressed',String(id===(this.mapLayer||'standard')));details.append(b);}tools.append(details);if(page==='live'){const fit=button(undefined,()=>{this.liveSelected=null;this.fitMarkers();this.clusterLive();this.drawSide();});fit.setAttribute('aria-label','显示全部位置');fit.append(icon('locate'));tools.append(fit);}
+      const details=el('details'),summary=el('summary');summary.setAttribute('aria-label','地图图层');summary.append(icon('layers'));details.append(summary);for(const [id,label] of [['standard','标准'],['satellite','卫星'],['dark','深色']]){const b=button(label,()=>{this.layer(id);details.open=false;});b.dataset.layer=id;b.setAttribute('aria-pressed',String(id===(this.mapLayer||'standard')));details.append(b);}tools.append(details);const fit=button(undefined,()=>this.resetMapView());fit.setAttribute('aria-label',page==='live'?'显示全部位置':'显示全部轨迹');fit.title=page==='live'?'显示全部位置':'显示全部轨迹';fit.append(icon('locate'));tools.append(fit);
       layout.dataset.mode=page;map.append(target,tools,this.menuButton());layout.append(side,map);main.append(layout);this.drawSide();
       if(this.started&&this._hass?.user?.is_admin)this.buildMap(target);
     }else this.drawData();
@@ -281,7 +281,7 @@ class LocationPanel extends HTMLElement{
       if(!item){
         const row=el('div',undefined,'lx-list-row lx-live-row'),avatar=el('div',undefined,'lx-avatar'),info=el('div',undefined,'lx-name'),name=el('strong',d.name);
         avatar.append(icon(kind));avatar.style.color=this.color(id);info.append(name);row.append(avatar,info);
-        row.onclick=()=>{if(!row.dataset.focus)return;this.liveSelected=this.liveSelected===id?null:id;if(this.liveSelected)this.focusDevice(id);else this.fitMarkers();this.drawSide();};
+        row.onclick=()=>{if(!row.dataset.focus)return;if(this.liveSelected===id)this.resetMapView();else{this.focusDevice(id);this.drawSide();}};
         row.onkeydown=e=>{if(row.dataset.focus&&(e.key==='Enter'||e.key===' ')){e.preventDefault();row.click();}};
         item={row,avatar,info,name,kind,addr:null,meta:null,status:null,key:null,full:null};rows.set(id,item);this.liveListObserver?.observe(row);
       }
@@ -498,7 +498,7 @@ class LocationPanel extends HTMLElement{
   async loadHistory(){
     const select=this.querySelector('.lx-history-filter select'),day=this.querySelector('[data-history-date]'),timeline=this.querySelector('#history-timeline');
     if(!select||!day||!timeline)return;
-    this.stopHistoryAddresses();this.historyResolved=new Map();this.historyFailed=new Set();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyFlags=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.paintHistory();
+    this.stopHistoryAddresses();this.historyResolved=new Map();this.historyFailed=new Set();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyFlags=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.paintHistory();
     timeline.replaceChildren(el('h2','定位时间轴'));
     if(!select.value||!day.value){timeline.append(el('p','请选择设备及日期','lx-muted'));return;}
     const start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
@@ -515,6 +515,7 @@ class LocationPanel extends HTMLElement{
       const body=el('div',undefined,'lx-list-scroll');timeline.append(body);
       const timeOnly=t=>new Date(t).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
       const close=(restore=false)=>{if(!expanded)return;expanded.row.setAttribute('aria-expanded','false');expanded.card.classList.remove('lx-point-open');expanded.arrow.textContent='⌄';this.animatePoint(expanded.detail,false);expanded=null;if(restore){this.selectHistoryMarker(null);this.fitHistory();}};
+      this.closeHistoryPoint=()=>close(false);
       const more=button('显示更多',()=>{limit+=50;render(true);});
       const render=(appendOnly=false)=>{
         if(rendering||seq!==this.historySeq||!body.isConnected)return;
@@ -553,14 +554,14 @@ class LocationPanel extends HTMLElement{
         render();this.paintHistory(false);
       };
       this.historyTimelineGroups=groups;render();
-      this.openHistoryPoint=i=>{if(seq!==this.historySeq||!body.isConnected)return;const g=groups.findIndex(v=>v.includes(i));if(g<0)return;if(g>=limit){limit=Math.ceil((g+1)/50)*50;render(true);}const row=body.querySelector('[data-group-start="'+groups[g][0]+'"]');if(row){row.openPoint(i);row.scrollIntoView({block:'nearest'});}};
+      this.openHistoryPoint=i=>{if(seq!==this.historySeq||!body.isConnected)return;const g=groups.findIndex(v=>v.includes(i));if(g<0)return;if(g>=limit){limit=Math.ceil((g+1)/50)*50;render(true);}const row=body.querySelector('[data-group-start="'+groups[g][0]+'"]');if(row){row.openPoint(i);this.revealInList(body,row);}};
       this.paintHistory();
     }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),el('p','查询失败：'+String(e.message||e),'lx-muted'));}
   }
   animatePoint(detail,open){
     if(detail._lxAnimation){detail._lxAnimation.cancel();detail._lxAnimation=null;}
     const reduce=typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if(!detail.animate||reduce){detail.hidden=!open;return;}
+    if(!detail.animate||reduce){detail.style.overflow='';detail.hidden=!open;return;}
     if(open)detail.hidden=false;
     const h=detail.getBoundingClientRect().height;
     const animation=detail.animate(open?[{height:'0px',opacity:0,paddingBottom:'0px'},{height:h+'px',opacity:1}]:[{height:h+'px',opacity:1},{height:'0px',opacity:0,paddingBottom:'0px'}],{duration:180,easing:'ease',fill:'none'});
@@ -690,7 +691,7 @@ class LocationPanel extends HTMLElement{
         const content=el('div'),dot=el('div',Array.from(d.name)[0]||'•','lx-marker');dot.style.background=color;
         const label=el('div',d.name,'lx-marker-label');content.append(dot,label);
         const marker=new A.Marker({position:xy,content,anchor:'center',offset:new A.Pixel(0,0),title:d.name});
-        marker.on('click',()=>{if(this.map===map&&this.markers.get(d.entity_id)?.marker===marker){this.focusDevice(d.entity_id);this.drawSide();}});map.add(marker);m={marker,circle:null,xy,dot,label,name:d.name};this.markers.set(d.entity_id,m);this.clusterSignature=null;
+        marker.on('click',()=>{if(this.map===map&&this.markers.get(d.entity_id)?.marker===marker){this.focusDevice(d.entity_id);this.drawSide();this.revealLiveDevice(d.entity_id);}});map.add(marker);m={marker,circle:null,xy,dot,label,name:d.name};this.markers.set(d.entity_id,m);this.clusterSignature=null;
       }
       if(m.name!==d.name){m.name=d.name;m.dot.textContent=Array.from(d.name)[0]||'•';m.label.textContent=d.name;m.marker.setTitle?.(d.name);}const moved=m.xy[0]!==xy[0]||m.xy[1]!==xy[1];if(moved){m.xy=xy;m.marker.setPosition(xy);}
       if(Number.isFinite(p.accuracy)&&p.accuracy>0){
@@ -699,7 +700,7 @@ class LocationPanel extends HTMLElement{
       }else if(m.circle){map.remove(m.circle);m.circle=null;this.clusterSignature=null;}
       m.accuracy=p.accuracy;
     }
-    if(!this.didFit&&this.markers.size){this.didFit=true;this.fitMarkers();}this.clusterLive();
+    if(!this.didFit&&this.markers.size){this.didFit=true;if(this.liveSelected&&this.markers.has(this.liveSelected))this.focusDevice(this.liveSelected);else this.fitMarkers();}this.clusterLive();
   }
   cancelCamera(){
     this.cameraSeq=(this.cameraSeq||0)+1;
@@ -711,7 +712,7 @@ class LocationPanel extends HTMLElement{
     const seq=this.cameraSeq,center=map.getCenter(),from=[center.lng,center.lat],startZoom=map.getZoom();
     const distance=this.historyDistance({longitude:from[0],latitude:from[1]},{longitude:xy[0],latitude:xy[1]});
     const reduce=typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if(reduce||!Number.isFinite(distance)||distance<2&&Math.abs(startZoom-zoom)<.1){map.setZoomAndCenter(zoom,xy,true);done?.();return;}
+    if(reduce||!Number.isFinite(distance)||distance<2&&Math.abs(startZoom-zoom)<.1){map.setZoomAndCenter(zoom,xy,true);if(this.page==='live')this.scheduleCluster();done?.();return;}
     const far=distance>30000,duration=far?850:distance>1000?650:450;
     const mid=Math.min(startZoom,zoom,Math.max(3,Math.log2(40075000/Math.max(distance*2,1)/256)+1));
     const begin=performance.now();this.cameraMoving=true;
@@ -776,7 +777,22 @@ class LocationPanel extends HTMLElement{
     if(this.liveClusters.length)map.add(this.liveClusters);this.clusterSignature=signature;
   }
   fitMarkers(){this.cancelCamera();this.liveExpanded=null;if(!this.map||!this.markers?.size)return;const list=[...this.markers.values()];if(list.length===1){this.map.setZoomAndCenter(16,list[0].xy);return;}this.map.setFitView(list.map(x=>x.marker),false,[60,60,60,60],16);}
-  focusDevice(id){const m=this.markers?.get(id);if(m&&this.map){this.liveSelected=id;this.liveExpanded=null;this.flyTo(m.xy,16);this.clusterLive();}}
+  resetMapView(){
+    if(this.page==='history'){this.closeHistoryPoint?.();this.selectHistoryMarker(null);this.fitHistory();return;}
+    if(this.page!=='live')return;
+    this.liveSelected=null;this.fitMarkers();this.clusterLive();this.drawSide();
+  }
+  revealInList(list,row){
+    if(!list||!row||!row.isConnected)return;
+    const box=list.getBoundingClientRect(),rect=row.getBoundingClientRect();
+    if(rect.top<box.top)list.scrollTop+=rect.top-box.top;
+    else if(rect.bottom>box.bottom)list.scrollTop+=Math.min(rect.top-box.top,rect.bottom-box.bottom);
+  }
+  revealLiveDevice(id){const view=this.liveListView;this.revealInList(view?.list,view?.rows.get(id)?.row);}
+  focusDevice(id){
+    this.liveSelected=id;this.liveExpanded=null;
+    const m=this.markers?.get(id);if(m&&this.map){this.flyTo(m.xy,16);this.clusterLive();}
+  }
   layer(id){this.mapLayer=id;for(const b of this.querySelectorAll('[data-layer]'))b.setAttribute('aria-pressed',String(b.dataset.layer===id));if(!this.map||this.appliedLayer===id)return;const A=this.A;if(id==='satellite'){this.map.setMapStyle('amap://styles/normal');this.map.setLayers([new A.TileLayer.Satellite(),new A.TileLayer.RoadNet()]);}else{if(!this.appliedLayer||this.appliedLayer==='satellite')this.map.setLayers([new A.TileLayer()]);this.map.setMapStyle(id==='dark'?'amap://styles/dark':'amap://styles/normal');}this.appliedLayer=id;}
   drawData(){
     const main=this.querySelector('.lx-content'),scroll=main.scrollTop,excludedOpen=main.querySelector('[data-excluded]')?.open||false,openMenu=main.querySelector('.lx-more[open] summary')?.dataset.controlKey,focused=document.activeElement?.dataset?.controlKey;main.replaceChildren();main.append(this.menuButton());const data=this.data;
