@@ -1,0 +1,27 @@
+name: Publish Locaris v0.2.6-preview
+on:
+  push:
+    branches: ['release/v0.2.6-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.6-preview >/dev/null 2>&1; then exit 0; fi
+          cat > /tmp/notes.md <<'EOF'
+          ## 每日首条定位与自动刷新优化
+          - 按 HA 本地时区保留每日首条有效 GPS 状态及后续定位属性变化，不保存零点基准状态。
+          - 升级后仅在当前授权范围及保留期限内一次性重新补查 Recorder。
+          - 实时定位变化使用独立状态快照检测；只读 WebSocket 请求超时后允许继续刷新。
+          - 前台恢复、页面重新显示时自动检查数据；不主动请求手机定位。
+          - 新增每日定位、跨日、授权范围、临时记录去重与前端请求恢复测试。
+          - CI 全部通过，实际 HA 设备定位上报和多终端刷新仍需验收。
+          EOF
+          gh release create v0.2.6-preview --target 837e774f2a6d8f64f5765d6ead5f35364441d021 --title "Locaris v0.2.6-preview" --notes-file /tmp/notes.md --prerelease --latest=false
