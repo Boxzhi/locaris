@@ -1,5 +1,6 @@
 """In-memory history revision and sync status; no location data stored."""
 from uuid import uuid4
+from hashlib import sha256
 
 class HistorySync:
     def __init__(self):
@@ -31,5 +32,6 @@ class HistorySync:
             status = "queued"
         else:
             status = "ready"
-        return {"revision": f"{self.session}:{self.cleanup_version}:{generation}:{self.versions.get(entity, 0)}",
+        entity_key = sha256(entity.encode()).hexdigest()[:24]
+        return {"revision": f"{self.session}:{entity_key}:{self.cleanup_version}:{generation}:{self.versions.get(entity, 0)}",
                 "sync_status": status}

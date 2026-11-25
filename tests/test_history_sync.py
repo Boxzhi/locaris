@@ -38,6 +38,7 @@ class HistorySyncTest(unittest.TestCase):
 
     def test_only_changed_device_revision_changes(self):
         a, b = self.meta()["revision"], self.meta("device_tracker.b")["revision"]
+        self.assertNotEqual(a, b)
         self.sync.changed("device_tracker.a", 3)
         self.assertNotEqual(a, self.meta()["revision"])
         self.assertEqual(b, self.meta("device_tracker.b")["revision"])

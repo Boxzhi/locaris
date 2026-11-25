@@ -251,7 +251,7 @@ class LocationPanel extends HTMLElement{
     const interval=this.page==='live'?this.policyValue('live_refresh_seconds')*1000:this.page==='devices'?TIMING.DEVICE_REFRESH_MS:this.page==='history'?TIMING.HISTORY_REFRESH_MS:TIMING.SETTINGS_REFRESH_MS;
     const elapsed=now-this.lastRefreshAt;
     if(!this.refreshToken&&(elapsed>=interval||(this.page==='live'&&this.liveDirty&&elapsed>=TIMING.LIVE_DIRTY_MS)))this.refresh();
-    if(this.page==='history'&&!this.historyLoading){const day=this.querySelector('[data-history-date]')?.value,today=new Date();today.setHours(0,0,0,0);const pending=['queued','importing','syncing','retry'].includes(this.historySyncStatus);const delay=pending?TIMING.HISTORY_PENDING_MS:day&&new Date(day+'T00:00:00').getTime()===today.getTime()?TIMING.HISTORY_TODAY_MS:TIMING.HISTORY_PAST_MS;if(now-(this.lastHistoryQuery||0)>=delay)this.loadHistory(true);}
+    if(this.page==='history'&&!this.historyLoading&&this.querySelector('.lx-history-filter select')?.value){const day=this.querySelector('[data-history-date]')?.value,today=new Date();today.setHours(0,0,0,0);const pending=['queued','importing','syncing','retry'].includes(this.historySyncStatus);const delay=pending?TIMING.HISTORY_PENDING_MS:day&&new Date(day+'T00:00:00').getTime()===today.getTime()?TIMING.HISTORY_TODAY_MS:TIMING.HISTORY_PAST_MS;if(now-(this.lastHistoryQuery||0)>=delay)this.loadHistory(true);}
     this.refreshMapSession();
   }
   status(s='',retry){const n=this.querySelector('.lx-error');if(!n)return;n.replaceChildren();n.hidden=!s;if(s){n.append(el('span',s));if(retry)n.append(button('重试',retry));}}
@@ -596,7 +596,9 @@ class LocationPanel extends HTMLElement{
       this.historyRevision=r.revision;this.historyQueryKey=key;this.historySyncStatus=r.sync_status;
       if(incremental&&(r.unchanged||(JSON.stringify(r.points)===JSON.stringify(this.historyData)&&!!r.truncated===this.historyTruncated))){this.updateHistorySync(timeline);return;}
       const previous=incremental?this.historyData:[],oldByTime=new Map(previous.map(p=>[p.recorded_at,p])),selected=incremental?previous[this.selectedHistoryIndex]?.recorded_at:null;
-      const scroll=incremental?(timeline.querySelector('.lx-list-scroll')?.scrollTop||0):0,oldLimit=incremental?this.historyLimit:50;
+      const oldBody=incremental?timeline.querySelector('.lx-list-scroll'):null,scroll=oldBody?.scrollTop||0,oldLimit=incremental?this.historyLimit:50;
+      const oldRect=oldBody?.getBoundingClientRect(),anchor=oldRect?[...oldBody.querySelectorAll('[data-group-start]')].find(row=>row.closest('.lx-point-card').getBoundingClientRect().bottom>oldRect.top):null;
+      const anchorTime=anchor?previous[Number(anchor.dataset.groupStart)]?.recorded_at:null,anchorOffset=anchor?anchor.getBoundingClientRect().top-oldRect.top:0;
       const retained=p=>{const old=oldByTime.get(p.recorded_at);return old&&old.latitude===p.latitude&&old.longitude===p.longitude&&old.accuracy===p.accuracy;};
       const keep=new Set(r.points.filter(retained).map(p=>p.recorded_at));
       this.historyResolved=new Map([...(this.historyResolved||[])].filter(([t])=>keep.has(t)));
@@ -607,7 +609,7 @@ class LocationPanel extends HTMLElement{
       this.historyData=r.points;this.historyTruncated=!!r.truncated;this.historyFlags=this.historyQuality(r.points);
       const title=el('div',undefined,'lx-title'),count=el('span','','lx-muted');title.dataset.historyLegend='1';title.title=this.historyLegend();count.title='位置为连续位置分组，记录为数据库中实际存储的定位记录';title.append(el('h2','定位时间轴'),count);timeline.replaceChildren(title);
       let shown=0,expanded=null,groups=this.historyGroups(r.points),limit=oldLimit||50,rendering=false;
-      const selectedGroup=groups.findIndex(g=>g.includes(this.selectedHistoryIndex));if(selectedGroup>=limit)limit=Math.ceil((selectedGroup+1)/50)*50;this.historyLimit=limit;
+      const selectedGroup=groups.findIndex(g=>g.includes(this.selectedHistoryIndex)),anchorIndex=anchorTime==null?-1:r.points.findIndex(p=>p.recorded_at===anchorTime),anchorGroup=groups.findIndex(g=>g.includes(anchorIndex));const requiredGroup=Math.max(selectedGroup,anchorGroup);if(requiredGroup>=limit)limit=Math.ceil((requiredGroup+1)/50)*50;this.historyLimit=limit;
       const updateCount=()=>{count.textContent=groups.length+' 个位置 · '+r.points.length+' 条记录'+(r.truncated?' · 已截断':'');};updateCount();
       const coordByTime=new Map(),timesByCoord=new Map();for(const p of r.points){const key=p.latitude+','+p.longitude;coordByTime.set(p.recorded_at,key);if(!timesByCoord.has(key))timesByCoord.set(key,[]);timesByCoord.get(key).push(p.recorded_at);}
       const watchAddress=this.watchHistoryAddresses(entity,seq);
@@ -654,9 +656,10 @@ class LocationPanel extends HTMLElement{
         render();this.paintHistory(false);
       };
       this.historyTimelineGroups=groups;render();body.scrollTop=scroll;
+      if(anchorGroup>=0){const row=body.querySelector('[data-group-start="'+groups[anchorGroup][0]+'"]');if(row)body.scrollTop+=row.getBoundingClientRect().top-body.getBoundingClientRect().top-anchorOffset;}
       this.openHistoryPoint=i=>{if(seq!==this.historySeq||!body.isConnected)return;const g=groups.findIndex(v=>v.includes(i));if(g<0)return;if(g>=limit){limit=Math.ceil((g+1)/50)*50;this.historyLimit=limit;render(true);}const row=body.querySelector('[data-group-start="'+groups[g][0]+'"]');if(row){row.openPoint(i);this.revealInList(body,row);}};
       this.paintHistory(!incremental||!previous.length&&!!r.points.length);
-    }catch(e){if(this.historyLoading===token&&timeline.isConnected&&this.page==='history'){if(!incremental||['invalid_device','not_loaded','unauthorized'].includes(e?.code)){this.stopHistoryAddresses();this.releaseHistory();this.paintHistory(false);timeline.replaceChildren(el('h2','定位时间轴'),this.stateView('历史轨迹查询失败',()=>this.loadHistory()));}else{let warning=timeline.querySelector('[data-history-sync]');if(!warning){warning=el('div',undefined,'lx-muted');warning.dataset.historySync='1';timeline.insertBefore(warning,timeline.querySelector('.lx-list-scroll'));}warning.textContent='历史记录同步暂不可用，稍后自动重试';}}}finally{if(this.historyLoading===token)this.historyLoading=null;}
+    }catch(e){if(this.historyLoading===token&&timeline.isConnected&&this.page==='history'){if(!incremental||['invalid_device','not_loaded','unauthorized'].includes(e?.code)){this.stopHistoryAddresses();this.releaseHistory();this.lastHistoryQuery=Date.now();this.paintHistory(false);timeline.replaceChildren(el('h2','定位时间轴'),this.stateView('历史轨迹查询失败',()=>this.loadHistory()));}else{let warning=timeline.querySelector('[data-history-sync]');if(!warning){warning=el('div',undefined,'lx-muted');warning.dataset.historySync='1';timeline.insertBefore(warning,timeline.querySelector('.lx-list-scroll'));}warning.textContent='历史记录同步暂不可用，稍后自动重试';}}}finally{if(this.historyLoading===token)this.historyLoading=null;}
   }
   animatePoint(detail,open){
     if(detail._lxAnimation){detail._lxAnimation.cancel();detail._lxAnimation=null;}
