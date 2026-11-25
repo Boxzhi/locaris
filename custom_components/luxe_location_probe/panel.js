@@ -1,4 +1,4 @@
-const VERSION='0.1.14-preview';
+const VERSION='0.1.15-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -24,11 +24,11 @@ const icon=name=>{const paths={'mdi:menu':'M4 6h16M4 12h16M4 18h16','mdi:map-mar
 const button=(text,fn,cls)=>{const b=el('button',text,cls);b.type='button';b.onclick=fn;return b;};
 class LocationPanel extends HTMLElement{
   set hass(v){this._hass=v;if(this.isConnected&&this.viewportResize)this.syncHostLayout();if(this.isConnected&&!this.started)this.start();}
-  connectedCallback(){this.page='live';this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
-  disconnectedCallback(){this.epoch++;this.started=false;clearInterval(this.timer);this.stopViewport();this.stopHistoryAddresses();this.destroyMap();}
+  connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
+  disconnectedCallback(){this.epoch++;this.started=false;clearInterval(this.timer);this.liveListObserver?.disconnect();this.liveListObserver=null;this.stopViewport();this.stopHistoryAddresses();this.destroyMap();}
   render(){
     this.innerHTML=`<style>
-    html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--primary-background-color,#131820);overscroll-behavior:none}luxe-location-probe{display:block;height:100vh;height:var(--lx-viewport,100dvh);width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--primary-background-color,#131820);-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
+    html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--primary-background-color,#131820);overscroll-behavior:none}luxe-location-probe{display:block;height:100vh;height:var(--lx-viewport,100dvh);width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--lx-host-bg,var(--primary-background-color,#131820));-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
     luxe-location-probe *{box-sizing:border-box}.lx-shell{height:100%;min-height:0;display:flex;flex-direction:column;gap:10px;padding:10px;overflow:hidden}
     .lx-head,.lx-tabs,.lx-row,.lx-actions,.lx-title{display:flex;align-items:center;gap:10px}
     .lx-head{flex:none;min-height:44px}.lx-menu{display:none}.lx-map-tools summary{list-style:none;cursor:pointer;padding:7px;display:flex}.lx-map-tools summary::-webkit-details-marker{display:none}.lx-map-tools details:not([open]) button{display:none}.lx-map-tools details button{display:block;width:100%}.lx-list-row[data-focus]{cursor:pointer}.lx-list-row[data-focus]:hover{background:var(--secondary-background-color,#293441)}.lx-marker{width:32px;height:32px;border:2px solid white;border-radius:50%;display:grid;place-items:center;color:white;font:bold 13px sans-serif;box-shadow:0 2px 8px #0006}.lx-marker-label{background:#182330;color:white;padding:3px 7px;border-radius:6px;white-space:nowrap;font:12px sans-serif;margin-top:3px;text-align:center}.lx-head h1{font-size:21px;margin:0;font-weight:650;flex:1}.lx-tabs{gap:4px;flex:none}
@@ -53,10 +53,28 @@ class LocationPanel extends HTMLElement{
     .lx-calendar-wrap{position:relative;min-width:0}.lx-date-trigger{display:flex;align-items:center;gap:8px;text-align:left}.lx-date-arrow{margin-left:auto}.lx-calendar{width:100%;margin-top:8px;padding:8px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:12px}.lx-calendar[hidden],.lx-point-address[hidden]{display:none!important}.lx-cal-header{display:flex;align-items:center;justify-content:space-between;gap:4px}.lx-cal-header button{min-height:34px;padding:4px 10px}.lx-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center;align-items:center;margin:6px 0}.lx-cal-grid button{padding:0;height:34px;min-width:0;font-size:14px;border-radius:8px}.lx-cal-grid button[aria-pressed=true]{background:var(--lx-accent);color:white}.lx-cal-grid button:disabled{opacity:.3}.lx-cal-today:not([aria-pressed=true]){color:var(--lx-accent);font-weight:bold}.lx-group-address{display:block}.lx-group-count{display:block;margin-top:3px}.lx-group-detail:not([hidden]){display:flex;flex-direction:column;gap:4px;padding-left:8px}.lx-raw-point{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 4px!important}.lx-raw-point>span:last-child{margin-left:auto}.lx-raw-number{min-width:24px;text-align:center;font-size:12px;color:var(--secondary-text-color,#a6afbd)}.lx-raw-selected{color:var(--lx-accent);background:var(--secondary-background-color,#293441)}.lx-point-number{display:grid;place-items:center;flex:none;min-width:26px;height:26px;padding:0 5px;border-radius:20px;background:var(--secondary-background-color,#303c4b);color:var(--secondary-text-color,#a6b4c5);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}.lx-point-row[aria-expanded=true] .lx-point-number{background:var(--lx-accent);color:white}.lx-point-label{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.5}.lx-point-row[aria-expanded=true] .lx-point-label{color:var(--lx-accent)}.lx-track-number{min-width:28px;width:auto;padding:0 5px;white-space:nowrap}.lx-track-selected{transform:scale(1.25);box-shadow:0 0 0 5px #4387e855,0 2px 6px #0005}.lx-point-address:not([hidden]){display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap}.lx-point-card{position:relative;border-radius:9px;padding:3px 0}.lx-point-card+.lx-point-card:before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:var(--lx-line);pointer-events:none}.lx-point-open{background:var(--secondary-background-color,#293441)}.lx-point-row{display:flex;width:100%;align-items:center;gap:8px;text-align:left;padding:10px 6px!important}.lx-point-row svg{flex:none;color:var(--secondary-text-color,#8997a9);width:18px;height:18px}.lx-point-row[aria-expanded=true] svg{color:var(--lx-accent)}.lx-point-row[aria-expanded=true] .lx-point-time,.lx-point-row[aria-expanded=true] .lx-point-arrow{color:var(--lx-accent)}.lx-point-row .lx-pin-filled{display:none}.lx-point-row[aria-expanded=true] .lx-pin-filled{display:block}.lx-point-row[aria-expanded=true] .lx-pin-outline{display:none}.lx-point-time{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap}.lx-point-arrow{color:var(--secondary-text-color,#a6afbd);font-size:16px}.lx-point-address{padding:0 10px 10px 32px;font-size:13px;color:var(--secondary-text-color,#a6afbd);overflow-wrap:anywhere}.lx-field{font:inherit;width:100%;padding:8px;border:1px solid var(--lx-line);border-radius:8px;background:var(--lx-card);color:inherit}.lx-sub{margin:8px 0 0}.lx-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-list-row:last-child{border:0}
     @media(max-width:760px){.lx-menu{display:block}.lx-head h1{font-size:20px}.lx-tabs{order:5;justify-content:space-around;border-top:1px solid var(--lx-line);padding:3px 0 max(0px, calc(env(safe-area-inset-bottom,0px) - var(--lx-host-safe-bottom,0px)))}.lx-tabs button{flex:1;flex-direction:column;gap:2px;padding:2px;font-size:11px}.lx-tabs ha-icon{--mdc-icon-size:23px}.lx-grid{grid-template-columns:1fr}.lx-map-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr);grid-template-areas:'map' 'side';height:100%;min-height:0}.lx-map-layout[data-mode=history]{grid-template-rows:auto minmax(0,1fr) minmax(0,1fr);grid-template-areas:'filter' 'map' 'side'}.lx-map{height:auto;min-height:0}.lx-side{overflow:hidden}.lx-history-filter h2{display:none}.lx-history-filter .lx-stack{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:8px;margin:0}.lx-history-filter .lx-date-trigger{font-size:12px;white-space:nowrap;padding:8px 5px}.lx-history-filter .lx-calendar{position:absolute;right:0;top:100%;width:min(310px,calc(100vw - 40px));z-index:15;box-shadow:0 8px 24px #0005}.lx-tabs button[aria-selected=true]{background:transparent}.lx-tabs button[aria-selected=true] svg{background:var(--secondary-background-color,#293441);box-sizing:content-box;padding:5px 12px;border-radius:10px}.lx-tabs button svg{box-sizing:content-box;padding:5px 12px}.lx-tabs button{-webkit-tap-highlight-color:transparent}.lx-card{padding:11px}.lx-shell{padding-bottom:0;gap:8px}}
     @media(max-width:760px) and (max-height:700px){.lx-map-layout{grid-template-rows:minmax(0,.85fr) minmax(0,1.15fr)}.lx-map-layout[data-mode=history]{grid-template-rows:auto minmax(0,.85fr) minmax(0,1.15fr)}}@media(max-width:760px) and (min-height:850px){.lx-map-layout{grid-template-rows:minmax(0,1.1fr) minmax(0,.9fr)}.lx-map-layout[data-mode=history]{grid-template-rows:auto minmax(0,1.1fr) minmax(0,.9fr)}}
+    luxe-location-probe[data-hide-header] .lx-head{display:none}
+    .lx-fallback-menu{display:none}
+    @media(max-width:760px){
+      luxe-location-probe[data-hide-header] .lx-fallback-menu{display:flex;align-items:center;justify-content:center;width:38px;height:38px;background:var(--lx-card);border-radius:10px;box-shadow:0 2px 10px #0002}
+      .lx-map>.lx-fallback-menu{position:absolute;left:10px;top:10px;z-index:6}
+      .lx-content>.lx-fallback-menu{margin-bottom:10px}
+      .lx-map-layout[data-mode=live]{grid-template-rows:minmax(0,1fr) minmax(0,min(var(--lx-live-list-natural,9999px),50%))}
+    }
+    @media(max-width:760px) and (max-height:700px){.lx-map-layout[data-mode=live]{grid-template-rows:minmax(0,1fr) minmax(0,min(var(--lx-live-list-natural,9999px),57.5%))}}
+    @media(max-width:760px) and (min-height:850px){.lx-map-layout[data-mode=live]{grid-template-rows:minmax(0,1fr) minmax(0,min(var(--lx-live-list-natural,9999px),45%))}}
     </style><div class="lx-shell"><header class="lx-head"><button id="menu" class="lx-menu" aria-label="打开侧边栏"></button><h1>位置中心</h1></header><nav class="lx-tabs" aria-label="位置中心页面"></nav><div class="lx-error" role="status"></div><main class="lx-content"></main></div>`;
     this.querySelector('#menu').append(icon('mdi:menu'));this.querySelector('#menu').onclick=()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true}));
     for(const [id,label,glyph] of TABS){const b=button(undefined,()=>this.switchPage(id));b.append(icon(glyph),el('span',label));b.dataset.page=id;this.querySelector('.lx-tabs').append(b);}
-    this.switchPage(this.page);this.startViewport();
+    this.applyHeader();this.switchPage(this.page);this.startViewport();
+  }
+  applyHeader(){
+    this.toggleAttribute('data-hide-header',!this.showHeader);
+    if(this.map)requestAnimationFrame(()=>this.map?.resize?.());
+  }
+  menuButton(){
+    const b=button('',()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true})),'lx-fallback-menu');
+    b.setAttribute('aria-label','打开侧边栏');b.append(icon('mdi:menu'));return b;
   }
   syncHostLayout(){
     // HA's custom-panel iframe can already reserve the iOS safe area as padding.
@@ -72,6 +90,15 @@ class LocationPanel extends HTMLElement{
           this.hostFrame=frame;
           this.hostBackground={value:frame.style.getPropertyValue('background-color'),priority:frame.style.getPropertyPriority('background-color')};
         }
+        // Prefer the host's theme tokens, not the iframe's own previously applied color.
+        const hostDoc=frame.ownerDocument,hostWin=hostDoc.defaultView;
+        const hostApp=hostDoc.querySelector('home-assistant');
+        const themeStyle=hostWin.getComputedStyle(hostApp||hostDoc.documentElement);
+        const rootStyle=hostWin.getComputedStyle(hostDoc.documentElement);
+        const token=name=>themeStyle.getPropertyValue(name).trim()||rootStyle.getPropertyValue(name).trim();
+        const hostColor=token('--app-header-background-color')||token('--primary-background-color')||token('--lovelace-background');
+        if(hostColor&&CSS.supports('background-color',hostColor))this.style.setProperty('--lx-host-bg',hostColor);
+        else this.style.removeProperty('--lx-host-bg');
         const color=getComputedStyle(this).backgroundColor;
         if(color&&color!=='transparent'&&color!=='rgba(0, 0, 0, 0)'){
           if(frame.style.getPropertyValue('background-color')!==color||frame.style.getPropertyPriority('background-color')!=='important'){
@@ -96,7 +123,7 @@ class LocationPanel extends HTMLElement{
       }
     }catch(e){}
     this.hostFrame=null;this.hostBackground=null;this.hostAppliedColor=null;
-    this.style.removeProperty('--lx-host-safe-bottom');
+    this.style.removeProperty('--lx-host-safe-bottom');this.style.removeProperty('--lx-host-bg');
   }
   layoutDiagnostics(){
     const round=n=>Math.round(n*100)/100;
@@ -115,7 +142,7 @@ class LocationPanel extends HTMLElement{
       }
     }catch(e){}
     const nav=this.querySelector('.lx-tabs'),last=nav?.lastElementChild,vv=window.visualViewport,viewportBottom=vv?vv.height+vv.offsetTop:window.innerHeight;
-    return {version:VERSION,page:this.page,hostSafeBottom:this.style.getPropertyValue('--lx-host-safe-bottom'),inIframe:window!==window.top,devicePixelRatio:window.devicePixelRatio,screen:{width:screen.width,height:screen.height},inner:{width:window.innerWidth,height:window.innerHeight},client:{width:document.documentElement.clientWidth,height:document.documentElement.clientHeight},visualViewport:vv?{width:vv.width,height:vv.height,offsetTop:vv.offsetTop,offsetLeft:vv.offsetLeft,scale:vv.scale}:null,safeArea:safe,viewportCss:this.style.getPropertyValue('--lx-viewport'),viewportMeta:document.querySelector('meta[name=viewport]')?.content??null,html:describe(document.documentElement),body:describe(document.body),panel:describe(this),shell:describe(this.querySelector('.lx-shell')),content:describe(this.querySelector('.lx-content')),map:describe(this.querySelector('.lx-map')),nav:describe(nav),navButton:describe(last),navBottomGap:nav?round(viewportBottom-nav.getBoundingClientRect().bottom):null,buttonBottomGap:last&&nav?round(nav.getBoundingClientRect().bottom-last.getBoundingClientRect().bottom):null,parent};
+    return {version:VERSION,page:this.page,hostSafeBottom:this.style.getPropertyValue('--lx-host-safe-bottom'),hostBackground:this.style.getPropertyValue('--lx-host-bg'),showHeader:this.showHeader,inIframe:window!==window.top,devicePixelRatio:window.devicePixelRatio,screen:{width:screen.width,height:screen.height},inner:{width:window.innerWidth,height:window.innerHeight},client:{width:document.documentElement.clientWidth,height:document.documentElement.clientHeight},visualViewport:vv?{width:vv.width,height:vv.height,offsetTop:vv.offsetTop,offsetLeft:vv.offsetLeft,scale:vv.scale}:null,safeArea:safe,viewportCss:this.style.getPropertyValue('--lx-viewport'),viewportMeta:document.querySelector('meta[name=viewport]')?.content??null,html:describe(document.documentElement),body:describe(document.body),panel:describe(this),shell:describe(this.querySelector('.lx-shell')),content:describe(this.querySelector('.lx-content')),map:describe(this.querySelector('.lx-map')),nav:describe(nav),navButton:describe(last),navBottomGap:nav?round(viewportBottom-nav.getBoundingClientRect().bottom):null,buttonBottomGap:last&&nav?round(nav.getBoundingClientRect().bottom-last.getBoundingClientRect().bottom):null,parent};
   }
   startViewport(){
     this.stopViewport();
@@ -155,13 +182,13 @@ class LocationPanel extends HTMLElement{
     finally{this.busy=false;}
   }
   switchPage(page){
-    this.stopHistoryAddresses();this.liveSelected=null;this.page=page;this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.destroyMap();
+    this.stopHistoryAddresses();this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveSelected=null;this.page=page;this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.destroyMap();
     for(const b of this.querySelectorAll('[data-page]'))b.setAttribute('aria-selected',String(b.dataset.page===page));
     const main=this.querySelector('.lx-content');main.replaceChildren();main.classList.toggle('lx-map-page',page==='live'||page==='history');
     if(page==='live'||page==='history'){
       const layout=el('div',undefined,'lx-map-layout'),side=el('aside',undefined,'lx-side'),map=el('div',undefined,'lx-map'),target=el('div',undefined,'lx-map-inner'),tools=el('div',undefined,'lx-map-tools');
       const details=el('details'),summary=el('summary');summary.setAttribute('aria-label','地图图层');summary.append(icon('layers'));details.append(summary);for(const [id,label] of [['standard','标准'],['satellite','卫星'],['dark','深色']]){const b=button(label,()=>{this.layer(id);details.open=false;});b.dataset.layer=id;b.setAttribute('aria-pressed',String(id===(this.mapLayer||'standard')));details.append(b);}tools.append(details);if(page==='live'){const fit=button(undefined,()=>{this.liveSelected=null;this.fitMarkers();this.clusterLive();this.drawSide();});fit.setAttribute('aria-label','显示全部位置');fit.append(icon('locate'));tools.append(fit);}
-      layout.dataset.mode=page;map.append(target,tools);layout.append(side,map);main.append(layout);this.drawSide();
+      layout.dataset.mode=page;map.append(target,tools,this.menuButton());layout.append(side,map);main.append(layout);this.drawSide();
       if(this._hass?.user?.is_admin){this.buildMap(target);if(page==='live'&&this.started&&!this.busy)this.refresh();}
     }else this.drawData();
   }
@@ -187,6 +214,15 @@ class LocationPanel extends HTMLElement{
         row.append(avatar,info);list.append(row);
       }
       if(!devices.length)list.append(el('p',data?'暂无设备':'正在读取设备…','lx-muted'));side.append(card);list.scrollTop=scroll;
+      this.liveListObserver?.disconnect();
+      const measure=()=>{
+        if(!card.isConnected||this.page!=='live')return;
+        const cs=getComputedStyle(card),hs=getComputedStyle(head);
+        const natural=Math.ceil(list.scrollHeight+head.getBoundingClientRect().height+(parseFloat(hs.marginBottom)||0)+(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0)+(parseFloat(cs.borderTopWidth)||0)+(parseFloat(cs.borderBottomWidth)||0));
+        const value=natural+'px';if(layout.style.getPropertyValue('--lx-live-list-natural')!==value){layout.style.setProperty('--lx-live-list-natural',value);requestAnimationFrame(()=>this.map?.resize?.());}
+      };
+      if(typeof ResizeObserver==='function'){this.liveListObserver=new ResizeObserver(measure);this.liveListObserver.observe(list);this.liveListObserver.observe(head);for(const row of list.children)this.liveListObserver.observe(row);}
+      requestAnimationFrame(measure);
     }else{
       const card=el('section',undefined,'lx-card lx-history-filter');card.append(el('h2','历史轨迹'));
       const select=el('select',undefined,'lx-field');select.setAttribute('aria-label','选择设备');
@@ -549,7 +585,7 @@ class LocationPanel extends HTMLElement{
   focusDevice(id){const m=this.markers?.get(id);if(m&&this.map){this.liveSelected=id;this.liveExpanded=null;this.flyTo(m.xy,16);this.clusterLive();}}
   layer(id){this.mapLayer=id;for(const b of this.querySelectorAll('[data-layer]'))b.setAttribute('aria-pressed',String(b.dataset.layer===id));if(!this.map)return;const A=this.A;if(id==='satellite'){this.map.setMapStyle('amap://styles/normal');this.map.setLayers([new A.TileLayer.Satellite(),new A.TileLayer.RoadNet()]);}else{this.map.setLayers([new A.TileLayer()]);this.map.setMapStyle(id==='dark'?'amap://styles/dark':'amap://styles/normal');}}
   drawData(){
-    const main=this.querySelector('.lx-content');main.replaceChildren();const data=this.data;
+    const main=this.querySelector('.lx-content');main.replaceChildren();main.append(this.menuButton());const data=this.data;
     if(!data){main.append(el('div','正在读取设备及存储信息…','lx-card'));return;}
     const stack=el('div',undefined,'lx-stack');main.append(stack);
     if(this.page==='devices'){
@@ -573,6 +609,7 @@ class LocationPanel extends HTMLElement{
       const copy=button('复制布局诊断',async()=>{const report=JSON.stringify(this.layoutDiagnostics(),null,2);try{await navigator.clipboard.writeText(report);this.status('布局诊断已复制');}catch(e){output.hidden=false;output.value=report;output.focus();output.select();}});
       layoutCard.append(copy,output);stack.append(layoutCard);
       const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
+      const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('luxe_location.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow,el('p','仅影响当前浏览器或 App，隐藏后仍可通过菜单打开侧边栏。','lx-muted'));stack.prepend(ui);
       const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；地址按需通过高德解析，缓存于 HA 内存和 SQLite；地图安全代理使用短期会话路径。','lx-muted'));stack.append(about);
     }
   }

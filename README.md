@@ -65,3 +65,7 @@ Home Assistant 独立位置中心。当前版本 v0.1.0-preview（第一阶段�
 
 ## v0.1.14-preview
 根据 iPhone 布局诊断修复重复安全区：内部导航仅保留 max(0, safe-area - iframe paddingBottom)，不改变 iframe 尺寸；当前 iframe 背景同步面板主题，退出恢复原有 inline 背景样式。移除临时诊断颜色，保留布局诊断。实测原始数据：外层812px、内部778px、外层和内部各34px。其他功能不变，待实机回归。
+
+
+## v0.1.15-preview
+面板背景优先跟随 HA 宿主 app-header/primary-background 主题变量，延续 iframe 安全区背景同步；原生状态栏实际颜色仍需实机确认。设置新增顶部标题栏显示开关（默认显示，LocalStorage 当前浏览器持久化），隐藏后手机地图及其他页面保留菜单入口。实时地图在列表内容较少时使用剩余高度，保留独立滚动和安全区修复。无定位或数据库变更。
