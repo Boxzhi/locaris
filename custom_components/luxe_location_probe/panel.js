@@ -1,4 +1,4 @@
-const VERSION='0.1.19-preview';
+const VERSION='0.1.20-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;

@@ -1,6 +1,7 @@
 from pathlib import Path
 import asyncio
 import math
+import logging
 import secrets
 import time
 from aiohttp import web
@@ -13,6 +14,7 @@ from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import callback
 from .location_store import Store, position
+_LOGGER = logging.getLogger(__name__)
 DOMAIN = "luxe_location_probe"
 PANEL = "luxe-location-probe"
 @websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/config"})
@@ -39,12 +41,15 @@ def ws_config(hass, connection, msg):
 @websocket_api.async_response
 async def ws_storage(hass, connection, msg):
     store = hass.data.get(DOMAIN, {}).get("store")
-    if not store or not store.ready:
+    if not store or not store.ready or not store.active:
         connection.send_error(msg["id"], "not_loaded", "Storage not ready")
         return
     try:
         action = msg["action"]
         await store.discover()
+        if not store.active or not store.ready:
+            connection.send_error(msg["id"], "not_loaded", "Storage not ready")
+            return
         if action == "add":
             await store.add(msg.get("entity_id",""))
         elif action == "remove":
@@ -73,6 +78,7 @@ async def ws_storage(hass, connection, msg):
     except ValueError:
         connection.send_error(msg["id"], "invalid_device", "Invalid GPS device")
     except Exception:
+        _LOGGER.warning("Location storage operation failed (no coordinates logged)")
         connection.send_error(msg["id"], "storage_failed", "Storage operation failed")
 
 @websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/history", vol.Required("entity_id"): str, vol.Required("start"): int, vol.Required("end"): int})
@@ -80,7 +86,7 @@ async def ws_storage(hass, connection, msg):
 @websocket_api.async_response
 async def ws_history(hass, connection, msg):
     store = hass.data.get(DOMAIN, {}).get("store")
-    if not store or not store.ready:
+    if not store or not store.ready or not store.active:
         connection.send_error(msg["id"], "not_loaded", "Storage not ready")
         return
     entity = msg["entity_id"]
@@ -89,13 +95,18 @@ async def ws_history(hass, connection, msg):
         connection.send_error(msg["id"], "invalid_range", "Select one day")
         return
     async with store.lock:
-        if entity not in store.managed:
+        if not store.active or not store.ready or entity not in store.managed:
             connection.send_error(msg["id"], "invalid_device", "Device not managed")
             return
         def read(con):
             rows = con.execute("SELECT recorded_at,latitude,longitude,accuracy FROM probe_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at LIMIT 10001", (entity,max(start,now_ms()-WINDOW),min(end,now_ms()+1))).fetchall()
             return [dict(r) for r in rows]
-        rows = await store.run(read)
+        try:
+            rows = await store.run(read)
+        except Exception:
+            _LOGGER.warning("Location history query failed (no coordinates logged)")
+            connection.send_error(msg["id"], "history_failed", "History query failed")
+            return
     connection.send_result(msg["id"], {"points":rows[:10000],"truncated":len(rows)>10000})
 
 def gcj(lon, lat):
@@ -148,10 +159,12 @@ class MapProxy(HomeAssistantView):
             async with async_get_clientsession(hass).get(target,params=params,allow_redirects=False,timeout=15) as resp:
                 if resp.status!=200:
                     return web.Response(status=502)
-                body=await resp.content.read(4*1024*1024+1)
-                if len(body)>4*1024*1024:
-                    return web.Response(status=502)
-                return web.Response(body=body,content_type=resp.content_type,headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer"})
+                body=bytearray()
+                async for chunk in resp.content.iter_chunked(65536):
+                    body.extend(chunk)
+                    if len(body)>4*1024*1024:
+                        return web.Response(status=502)
+                return web.Response(body=bytes(body),content_type=resp.content_type,headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer"})
         except Exception:
             return web.Response(status=502)
 
@@ -162,11 +175,15 @@ async def ws_address(hass,connection,msg):
     state=hass.data.get(DOMAIN,{})
     store=state.get("store")
     entity=msg["entity_id"]
-    if not store or not store.ready or entity not in store.managed:
+    if not store or not store.ready or not store.active or entity not in store.managed:
         connection.send_error(msg["id"],"invalid_device","Device not managed")
         return
     # Resolve only existing authorized device positions, never arbitrary coordinates.
     async with store.lock:
+        if not store.active or not store.ready or entity not in store.managed:
+            connection.send_result(msg["id"],{"address":None})
+            return
+        initial_generation=store.generations.get(entity,0)
         if "recorded_at" in msg:
             row=await store.run(lambda c:c.execute("SELECT longitude,latitude FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
             coords=tuple(row) if row else None
@@ -184,7 +201,7 @@ async def ws_address(hass,connection,msg):
         # Snapshot the recording generation; removal/pause/re-add during HTTP
         # must never resurrect an address after the device's history was deleted.
         async with store.lock:
-            if not store.active or entity not in store.managed:
+            if not store.active or not store.ready or entity not in store.managed or store.generations.get(entity,0)!=initial_generation:
                 connection.send_result(msg["id"],{"address":None})
                 return
             generation=await store.run(lambda c:c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?",(entity,)).fetchone())
@@ -212,10 +229,28 @@ async def ws_address(hass,connection,msg):
         delay=max(0,1-(time.monotonic()-state.get("last_address_request",-1000)))
         if delay:
             await asyncio.sleep(delay)
+        # Recheck authorization after rate-limit sleep, immediately before dispatch.
+        async with store.lock:
+            active=state.get("active")
+            if not active or state.get("store") is not store or not store.active or not store.ready or entity not in store.managed or store.generations.get(entity,0)!=initial_generation:
+                connection.send_result(msg["id"],{"address":None})
+                return
+            if "recorded_at" in msg:
+                exists=await store.run(lambda c:c.execute("SELECT 1 FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
+                if not exists:
+                    connection.send_result(msg["id"],{"address":None})
+                    return
+            elif entity not in store.devices:
+                connection.send_result(msg["id"],{"address":None})
+                return
+            if not store.active or not store.ready or state.get("store") is not store:
+                connection.send_result(msg["id"],{"address":None})
+                return
+            service_key=active["service_key"]
         state["last_address_request"]=time.monotonic()
         address=None
         try:
-            async with async_get_clientsession(hass).get("https://restapi.amap.com/v3/geocode/regeo",params={"key":state["active"]["service_key"],"location":f"{lon:.6f},{lat:.6f}","extensions":"base"},timeout=10,allow_redirects=False) as resp:
+            async with async_get_clientsession(hass).get("https://restapi.amap.com/v3/geocode/regeo",params={"key":service_key,"location":f"{lon:.6f},{lat:.6f}","extensions":"base"},timeout=10,allow_redirects=False) as resp:
                 result=await resp.json(content_type=None)
                 if result.get("status")=="1":
                     address=result.get("regeocode",{}).get("formatted_address")
@@ -223,7 +258,7 @@ async def ws_address(hass,connection,msg):
             pass
         async with store.lock:
             current=await store.run(lambda c:c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?",(entity,)).fetchone()) if store.active else None
-            if not current or current[0]!=generation or entity not in store.managed or ("recorded_at" not in msg and entity not in store.devices):
+            if not current or current[0]!=generation or store.generations.get(entity,0)!=initial_generation or not store.ready or entity not in store.managed or ("recorded_at" not in msg and entity not in store.devices):
                 address=None
             if isinstance(address,str) and address:
                 address=address[:1024]
@@ -246,14 +281,33 @@ async def async_setup_entry(hass, entry):
         hass.http.register_view(MapProxy())
         state["registered"] = True
     store = Store(hass)
-    await store.start()
-    state["store"] = store
-    state["active"] = dict(entry.data)
-    state["proxy_sessions"] = {}
-    state["address_cache"] = {}
-    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.19-preview", require_admin=True, embed_iframe=True)
+    try:
+        await store.start()
+        state["store"] = store
+        state["active"] = dict(entry.data)
+        state["proxy_sessions"] = {}
+        state["address_cache"] = {}
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.20-preview", require_admin=True, embed_iframe=True)
+    except BaseException:
+        state.pop("active", None)
+        state.pop("store", None)
+        state.pop("proxy_sessions", None)
+        state.pop("address_cache", None)
+        try:
+            frontend.async_remove_panel(hass, PANEL)
+        except Exception:
+            pass
+        try:
+            await store.stop()
+        except Exception:
+            _LOGGER.warning("Location setup rollback failed")
+        raise
     return True
 async def async_unload_entry(hass, entry):
+    store = hass.data[DOMAIN].get("store")
+    if store:
+        store.active = False
+        store.ready = False
     frontend.async_remove_panel(hass, PANEL)
     hass.data[DOMAIN].pop("active",None)
     hass.data[DOMAIN].pop("proxy_sessions",None)
