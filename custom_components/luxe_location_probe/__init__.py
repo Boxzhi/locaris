@@ -69,7 +69,7 @@ async def ws_storage(hass, connection, msg):
                 item["position"] = {"latitude":pos[0],"longitude":pos[1],"accuracy":pos[2],
                     "updated_at":int(state.last_updated.timestamp()*1000)}
             devices.append(item)
-        connection.send_result(msg["id"], {"candidates":devices,"diagnostics":await store.diagnostics()})
+        connection.send_result(msg["id"], {"candidates":devices,"storage":await store.storage_stats()})
     except ValueError:
         connection.send_error(msg["id"], "invalid_device", "Invalid GPS device")
     except Exception:
@@ -251,7 +251,7 @@ async def async_setup_entry(hass, entry):
     state["active"] = dict(entry.data)
     state["proxy_sessions"] = {}
     state["address_cache"] = {}
-    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.18-preview", require_admin=True, embed_iframe=True)
+    await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.19-preview", require_admin=True, embed_iframe=True)
     return True
 async def async_unload_entry(hass, entry):
     frontend.async_remove_panel(hass, PANEL)

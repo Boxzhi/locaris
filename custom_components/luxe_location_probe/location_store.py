@@ -51,7 +51,6 @@ class Store:
         self.ready = False
         self.tasks = set()
         self.last_cleanup = None
-        self.errors = 0
 
     def db(self, fn, *args):
         with closing(sqlite3.connect(self.path, timeout=10)) as con:
@@ -234,7 +233,6 @@ class Store:
                 if self.active and entity in self.devices:
                     await self.run(self.insert, entity, [p], "state_change")
         except Exception:
-            self.errors += 1
             _LOGGER.warning("Location probe write failed (no coordinates logged)")
 
     async def enable(self, entity, import_history):
@@ -311,7 +309,6 @@ class Store:
         except asyncio.CancelledError:
             raise
         except Exception:
-            self.errors += 1
             _LOGGER.warning("Location probe Recorder import failed (no coordinates logged)")
         finally:
             self.importing.discard(entity)
@@ -358,19 +355,21 @@ class Store:
         # Bound storage independently of the retention window.
         con.execute("DELETE FROM probe_address_cache WHERE rowid IN (SELECT rowid FROM probe_address_cache ORDER BY created_at DESC LIMIT -1 OFFSET 10000)")
 
-    async def diagnostics(self):
+    async def storage_stats(self):
         def read(con):
-            rows = con.execute("""SELECT d.entity_id,COUNT(l.recorded_at) AS count,
-                    MIN(l.recorded_at) AS oldest,MAX(l.recorded_at) AS newest
-                FROM probe_devices d LEFT JOIN probe_locations l
-                ON d.entity_id=l.entity_id AND l.recorded_at>=?
-                GROUP BY d.entity_id""", (now_ms() - WINDOW,)).fetchall()
-            return [dict(row) for row in rows]
+            cutoff = now_ms() - WINDOW
+            location_count = con.execute("""SELECT COUNT(l.recorded_at)
+                FROM probe_devices d JOIN probe_locations l
+                ON d.entity_id=l.entity_id WHERE l.recorded_at>=?""",
+                (cutoff,)).fetchone()[0]
+            address_count = con.execute(
+                "SELECT COUNT(*) FROM probe_address_cache WHERE created_at>=?",
+                (cutoff,)).fetchone()[0]
+            return location_count, address_count
         async with self.lock:
-            rows = await self.run(read)
-            address_count = await self.run(lambda c:c.execute("SELECT COUNT(*) FROM probe_address_cache WHERE created_at>=?",(now_ms()-WINDOW,)).fetchone()[0])
+            location_count, address_count = await self.run(read)
             size = await self.hass.async_add_executor_job(lambda: sum(p.stat().st_size for p in self.path.parent.glob("location.db*") if p.is_file()))
-        return {"retention_days":30,"database_bytes":size,"last_cleanup":self.last_cleanup,"errors":self.errors,"devices":rows,"address_cache_count":address_count}
+        return {"retention_days":30,"database_bytes":size,"last_cleanup":self.last_cleanup,"location_count":location_count,"address_cache_count":address_count}
 
     async def stop(self):
         self.active = False

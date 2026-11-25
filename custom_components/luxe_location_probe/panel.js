@@ -1,4 +1,4 @@
-const VERSION='0.1.18-preview';
+const VERSION='0.1.19-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -590,9 +590,9 @@ class LocationPanel extends HTMLElement{
       const excluded=el('details',undefined,'lx-card'),summary=el('summary','已移除设备 · '+removed.length+' 台');excluded.append(summary);for(const d of removed){const row=el('div',undefined,'lx-row');row.append(el('span',d.name),button('重新添加',()=>this.refresh('add',d.entity_id)));excluded.append(row);}stack.append(excluded);
       stack.append(el('p','首次开启历史记录自动导入可用历史；关闭后保留已有数据。仅对已有位置共享许可的设备开启记录。','lx-muted'));
     }else{
-      const d=data.diagnostics,card=el('section',undefined,'lx-card');card.append(el('h2','数据存储'));
-      for(const [name,value] of [['历史保留','30 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.devices.reduce((s,x)=>s+x.count,0))],['最近清理',fmt(d.last_cleanup)],['错误次数',String(d.errors)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
-      card.append(button('复制诊断',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(d,null,2));this.status('诊断已复制');}catch(e){this.status('复制失败');}}));stack.append(card);
+      const d=data.storage,card=el('section',undefined,'lx-card');card.append(el('h2','数据存储'));
+      for(const [name,value] of [['历史保留',String(d.retention_days)+' 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.location_count)],['最近清理',fmt(d.last_cleanup)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
+      stack.append(card);
 
       const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
       const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('luxe_location.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow);stack.prepend(ui);
