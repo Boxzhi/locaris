@@ -414,7 +414,7 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
 async def async_setup(hass, config):
     return True
 async def async_setup_entry(hass, entry):
-    # Never start a second writer against the shared legacy database.
+    # Require removal of the legacy config entry before copying its database.
     if hass.config_entries.async_entries(LEGACY_DOMAIN):
         _LOGGER.error("Remove the legacy LUXE Location config entry and restart Home Assistant before setting up Locaris")
         return False
@@ -442,7 +442,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.0-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.1-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)

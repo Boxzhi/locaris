@@ -1,10 +1,10 @@
-const VERSION='0.2.0-preview';
+const VERSION='0.2.1-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
 let sdkPromise,sdkSession,sdkConfigPromise;
-const WEBGL_SAFE_KEY='luxe_location.webgl_safe_session';
-const WEBGL_FORCE_RETRY_KEY='luxe_location.webgl_force_retry_session';
+const WEBGL_SAFE_KEY='locaris.webgl_safe_session';
+const WEBGL_FORCE_RETRY_KEY='locaris.webgl_force_retry_session';
 let webglState={available:false,force:false,safe:false,retried:false,reloadPending:false,correctionBlocked:false};
 function probeWebGL(strict){
   // Use separate canvases for different context attributes and release probes.
@@ -91,7 +91,7 @@ class LocationPanel extends HTMLElement{
     if(this.started&&old?.connected===false&&v?.connected!==false&&!document.hidden){this.status();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&!this.historyLoading)this.loadHistory();else this.drainHistoryAddresses();}}
     if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&d.enabled&&(old.states[d.entity_id]?.last_updated!==v.states[d.entity_id]?.last_updated||old.states[d.entity_id]?.state!==v.states[d.entity_id]?.state)))this.liveDirty=true;
   }
-  connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
+  connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('locaris.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
   disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.data=null;this.liveAddressCache?.clear();this.dataError='';clearInterval(this.timer);this.timer=null;if(this.visibilityHandler){document.removeEventListener('visibilitychange',this.visibilityHandler);this.visibilityHandler=null;}this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveListView=null;this.stopViewport();this.closeHistoryCalendar();this.stopMenus();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
   render(){
     this.innerHTML=`<style>
@@ -939,7 +939,7 @@ class LocationPanel extends HTMLElement{
       if(!d)card.append(el('p','正在读取存储信息…','lx-muted'));else for(const [name,value] of [['历史保留',String(d.retention_days)+' 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.location_count)],['最近清理',fmt(d.last_cleanup)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
       stack.append(this.drawRuntimePolicy(),card);
 
-      const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.dataset.controlKey='show-header';uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('luxe_location.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow);stack.prepend(ui);
+      const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.dataset.controlKey='show-header';uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('locaris.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow);stack.prepend(ui);
       const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','Locaris · '+VERSION));stack.append(about);
     }
     main.scrollTop=scroll;

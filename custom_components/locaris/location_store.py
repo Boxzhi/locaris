@@ -1,4 +1,4 @@
-"""Opt-in location storage probe. No active location requests."""
+"""Opt-in Locaris location storage. No active location requests."""
 import asyncio
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -10,6 +10,7 @@ import sqlite3
 import time
 
 from .history_logic import recorder_changes
+from .database_migration import migrate_database
 from .const import (WINDOW, HISTORY_RETENTION_DAYS, DAY_MS,
     BACKFILL_RETRY_S, BACKFILL_OVERLAP_MS, RECORDER_MIN_DELAY_MS,
     RECORDER_DEFAULT_COMMIT_S, RECORDER_COMMIT_BUFFER_MS, RECORDER_BOUNDARY_MS,
@@ -49,7 +50,8 @@ def point(state):
 class Store:
     def __init__(self, hass):
         self.hass = hass
-        self.path = Path(hass.config.path("luxe_location", "location.db"))
+        self.path = Path(hass.config.path("locaris", "location.db"))
+        self.legacy_path = Path(hass.config.path("luxe_location", "location.db"))
         self.lock = asyncio.Lock()
         self.devices = set()
         self.managed = set()
@@ -100,6 +102,9 @@ class Store:
         return await self.hass.async_add_executor_job(self.db, fn, *args)
 
     def initialize(self):
+        result = migrate_database(self.legacy_path, self.path)
+        if result == "migrated":
+            _LOGGER.info("Locaris database migrated successfully; legacy backup retained")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path, timeout=SQLITE_START_TIMEOUT_S)) as con:
             if con.execute("PRAGMA quick_check(1)").fetchone()[0] != "ok":
