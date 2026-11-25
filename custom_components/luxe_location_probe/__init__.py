@@ -11,16 +11,34 @@ from .location_store import now_ms, WINDOW
 import voluptuous as vol
 from homeassistant.components import frontend, panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
-from homeassistant.core import callback
 from .location_store import Store, position
 from .history_logic import collapse_history
+from . import security
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "luxe_location_probe"
 PANEL = "luxe-location-probe"
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/config",vol.Optional("renew_path"):str})
+
+def checked(fn):
+    def validate(value):
+        try:
+            return fn(value)
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from None
+    return validate
+
+async def current_admin(hass, connection):
+    user = await hass.auth.async_get_user(connection.user.id)
+    return bool(user and user.is_active and user.is_admin and connection.user.is_active and connection.user.is_admin)
+
+def connection_admin(connection):
+    return connection.user.is_active and connection.user.is_admin
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/config",vol.Optional("renew_path"):checked(security.session_path)})
 @websocket_api.require_admin
-@callback
-def ws_config(hass, connection, msg):
+@websocket_api.async_response
+async def ws_config(hass, connection, msg):
+    if not await current_admin(hass, connection):
+        connection.send_error(msg["id"], "unauthorized", "Administrator required")
+        return
     data = hass.data.get(DOMAIN, {}).get("active")
     if not data:
         connection.send_error(msg["id"], "not_loaded", "Probe not loaded")
@@ -48,20 +66,25 @@ def ws_config(hass, connection, msg):
     token = secrets.token_urlsafe(32)
     sessions[token] = {"expires":now+43200,"times":[],"user":connection.user.id}
     connection.send_result(msg["id"], {"map_key":data["map_key"],"proxy_path":"/api/luxe_location/"+token+"/_AMapService"})
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove"]), vol.Optional("entity_id"): str, vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool, vol.Optional("include_storage", default=True): bool})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove"]), vol.Optional("entity_id"): checked(security.entity_id), vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool, vol.Optional("include_storage", default=True): bool})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_storage(hass, connection, msg):
+    if not await current_admin(hass, connection):
+        connection.send_error(msg["id"], "unauthorized", "Administrator required")
+        return
     store = hass.data.get(DOMAIN, {}).get("store")
     if not store or not store.ready or not store.active:
         connection.send_error(msg["id"], "not_loaded", "Storage not ready")
         return
     try:
         action = msg["action"]
+        if action != "list" and not msg.get("entity_id"):
+            raise ValueError("Device required")
         # Discovery is already scheduled every minute by Store.
         if action != "list":
             await store.discover()
-        if not store.active or not store.ready:
+        if not connection_admin(connection) or not store.active or not store.ready:
             connection.send_error(msg["id"], "not_loaded", "Storage not ready")
             return
         if action == "add":
@@ -81,6 +104,9 @@ async def ws_storage(hass, connection, msg):
         if not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store:
             connection.send_error(msg["id"], "not_loaded", "Storage not ready")
             return
+        if not connection_admin(connection):
+            connection.send_error(msg["id"], "unauthorized", "Administrator required")
+            return
         devices = []
         for entity in sorted(store.managed | store.excluded):
             state = hass.states.get(entity)
@@ -99,10 +125,13 @@ async def ws_storage(hass, connection, msg):
         _LOGGER.warning("Location storage operation failed (no coordinates logged)")
         connection.send_error(msg["id"], "storage_failed", "Storage operation failed")
 
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/history", vol.Required("entity_id"): str, vol.Required("start"): int, vol.Required("end"): int, vol.Optional("collapse_repeated", default=False): bool})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/history", vol.Required("entity_id"): checked(security.entity_id), vol.Required("start"): checked(security.timestamp), vol.Required("end"): checked(security.timestamp), vol.Optional("collapse_repeated", default=False): bool})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_history(hass, connection, msg):
+    if not await current_admin(hass, connection):
+        connection.send_error(msg["id"], "unauthorized", "Administrator required")
+        return
     store = hass.data.get(DOMAIN, {}).get("store")
     if not store or not store.ready or not store.active:
         connection.send_error(msg["id"], "not_loaded", "Storage not ready")
@@ -130,7 +159,7 @@ async def ws_history(hass, connection, msg):
             _LOGGER.warning("Location history query failed (no coordinates logged)")
             connection.send_error(msg["id"], "history_failed", "History query failed")
             return
-    if not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store or entity not in store.managed or store.generations.get(entity, 0) != generation:
+    if not connection_admin(connection) or not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store or entity not in store.managed or store.generations.get(entity, 0) != generation:
         connection.send_error(msg["id"], "not_loaded", "Storage not ready")
         return
     connection.send_result(msg["id"], {"points":rows,"truncated":truncated,"collapsed":hidden})
@@ -196,13 +225,21 @@ class MapProxy(HomeAssistantView):
         except Exception:
             return web.Response(status=502)
 
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN+"/address",vol.Required("entity_id"):str,vol.Optional("recorded_at"):int,vol.Optional("expected_updated_at"):int,vol.Optional("expected_latitude"):vol.Coerce(float),vol.Optional("expected_longitude"):vol.Coerce(float)})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN+"/address",vol.Required("entity_id"):checked(security.entity_id),vol.Optional("recorded_at"):checked(security.timestamp),vol.Optional("expected_updated_at"):checked(security.timestamp),vol.Optional("expected_latitude"):checked(lambda v: security.coordinate(v,90)),vol.Optional("expected_longitude"):checked(lambda v: security.coordinate(v,180))})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_address(hass,connection,msg):
+    if not await current_admin(hass, connection):
+        connection.send_error(msg["id"], "unauthorized", "Administrator required")
+        return
     state=hass.data.get(DOMAIN,{})
     store=state.get("store")
     entity=msg["entity_id"]
+    snapshot={"expected_updated_at","expected_latitude","expected_longitude"}
+    supplied=snapshot.intersection(msg)
+    if supplied and (supplied != snapshot or "recorded_at" in msg):
+        connection.send_error(msg["id"], "invalid_snapshot", "Invalid position snapshot")
+        return
     if not store or not store.ready or not store.active or entity not in store.managed:
         connection.send_error(msg["id"],"invalid_device","Device not managed")
         return
@@ -211,7 +248,7 @@ async def ws_address(hass,connection,msg):
         connection.send_result(msg["id"],{"address":None})
         return
     def valid():
-        return state.get("store") is store and state.get("address_runtime") is runtime and store.active and store.ready and entity in store.managed and store.generations.get(entity,0)==initial_generation and ("recorded_at" in msg or entity in store.devices)
+        return connection_admin(connection) and state.get("store") is store and state.get("address_runtime") is runtime and store.active and store.ready and entity in store.managed and store.generations.get(entity,0)==initial_generation and ("recorded_at" in msg or entity in store.devices)
     # Resolve only existing authorized device positions, never arbitrary coordinates.
     async with store.lock:
         if not store.active or not store.ready or entity not in store.managed:
@@ -291,7 +328,7 @@ async def ws_address(hass,connection,msg):
                 if not latest or (latest[1],latest[0])!=coords:
                     connection.send_result(msg["id"],{"address":None})
                     return
-            if not store.active or not store.ready or state.get("store") is not store:
+            if not valid():
                 connection.send_result(msg["id"],{"address":None})
                 return
             service_key=active["service_key"]
@@ -355,7 +392,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_sessions"] = {}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.39-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.40-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)
