@@ -25,7 +25,7 @@ jobs:
           python -m compileall -q custom_components/locaris tests
           python -m unittest discover -s tests -p 'test_*.py'
           node --check custom_components/locaris/panel.js
-          node --test tests/test_panel_refresh.cjs
+          node --test tests/test_panel_refresh.cjs tests/test_camera.cjs
           python - <<'PY'
           import json, pathlib, re
           p = pathlib.Path("custom_components/locaris")
