@@ -1,4 +1,4 @@
-const VERSION='0.1.25.1-preview';
+const VERSION='0.1.26-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -172,7 +172,7 @@ class LocationPanel extends HTMLElement{
     else this.refresh();
     if(this.isConnected&&epoch===this.epoch){
       this.timer=setInterval(()=>this.refreshTick(),5000);
-      this.visibilityHandler=()=>{if(!document.hidden){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();}};
+      this.visibilityHandler=()=>{if(!document.hidden){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history')this.drainHistoryAddresses();}};
       document.addEventListener('visibilitychange',this.visibilityHandler);
     }
   }
@@ -220,7 +220,7 @@ class LocationPanel extends HTMLElement{
   }
   releaseHistory(){
     this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyTimelineGroups=null;
-    this.historyResolved=null;this.historyRegroup=null;this.openHistoryPoint=null;this.selectedHistoryIndex=null;
+    this.historyResolved=null;this.historyFailed=null;this.historyRegroup=null;this.openHistoryPoint=null;this.selectedHistoryIndex=null;
   }
   closeHistoryCalendar(){
     if(this.calendarOutside){document.removeEventListener('pointerdown',this.calendarOutside,true);this.calendarOutside=null;}
@@ -367,16 +367,18 @@ class LocationPanel extends HTMLElement{
     return target=>{if(this.historyAddressObserver)this.historyAddressObserver.observe(target);else enqueue(target);};
   }
   async drainHistoryAddresses(){
-    if(this.historyAddressBusy)return;
+    if(this.historyAddressBusy||document.hidden)return;
     this.historyAddressBusy=true;
     try{
-      while(this.historyAddressQueue?.length){
+      while(this.historyAddressQueue?.length&&!document.hidden){
         const item=this.historyAddressQueue.shift();
         if(item.generation!==this.historyAddressGeneration||item.seq!==this.historySeq||this.page!=='history'||!item.target.isConnected)continue;
         if(!this._hass?.user?.is_admin)break;
+        if(this.historyResolved?.has(item.at)||this.historyFailed?.has(item.at))continue;
         const address=await this.resolveAddress(item.entity,item.at,item.target);
-        if(item.generation===this.historyAddressGeneration&&item.seq===this.historySeq&&this.page==='history'&&item.target.isConnected&&address){
-          this.historyResolved.set(item.at,address);this.historyRegroup?.();
+        if(item.generation===this.historyAddressGeneration&&item.seq===this.historySeq&&this.page==='history'){
+          if(address){this.historyResolved.set(item.at,address);this.historyRegroup?.();}
+          else{this.historyFailed?.add(item.at);for(const node of this.querySelectorAll('.lx-group-address'))if(node._lxRecordedAt===item.at)node.textContent='地址暂不可用';}
         }
       }
     }finally{this.historyAddressBusy=false;}
@@ -417,7 +419,7 @@ class LocationPanel extends HTMLElement{
   async loadHistory(){
     const select=this.querySelector('.lx-history-filter select'),day=this.querySelector('[data-history-date]'),timeline=this.querySelector('#history-timeline');
     if(!select||!day||!timeline)return;
-    this.stopHistoryAddresses();this.historyResolved=new Map();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.paintHistory();
+    this.stopHistoryAddresses();this.historyResolved=new Map();this.historyFailed=new Set();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.paintHistory();
     timeline.replaceChildren(el('h2','定位时间轴'));
     if(!select.value||!day.value){timeline.append(el('p','请选择设备及日期','lx-muted'));return;}
     const start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
@@ -440,19 +442,20 @@ class LocationPanel extends HTMLElement{
         const active=this.selectedHistoryIndex,scroll=body.scrollTop;
         // Cancel obsolete visible-row observations; pending requests for removed DOM nodes are discarded.
         this.historyAddressObserver?.disconnect();
+        this.historyAddressQueue=[];
         expanded=null;body.replaceChildren();shown=0;
         for(const indices of groups.slice(0,limit)){
           const i=indices[0],p=r.points[i],card=el('div',undefined,'lx-point-card'),detail=el('div',undefined,'lx-point-address lx-group-detail'),arrow=el('span','⌄','lx-point-arrow');
           detail.hidden=true;
           const row=button('',()=>open(i,false),'lx-point-row'),number=el('span',this.historyLabel(indices),'lx-point-number'),info=el('span',undefined,'lx-point-label');
-          const address=el('span',this.historyResolved.get(p.recorded_at)||'地址待加载','lx-group-address');address._lxRecordedAt=p.recorded_at;info.append(address);
+          const address=el('span',this.historyResolved.get(p.recorded_at)||(this.historyFailed.has(p.recorded_at)?'地址暂不可用':'地址待加载'),'lx-group-address');address._lxRecordedAt=p.recorded_at;info.append(address);
           if(indices.length>1)info.append(el('span',indices.length+' 次定位记录','lx-muted lx-group-count'));
           row.dataset.groupStart=String(i);row.setAttribute('aria-expanded','false');row.append(number,info,arrow);
           const focus=j=>{this.selectHistoryMarker(j);if(this.map)this.flyTo(this.gcj(r.points[j].longitude,r.points[j].latitude),17);for(const child of detail.children)child.classList.toggle('lx-raw-selected',Number(child.dataset.index)===j);};
           const open=(j,force)=>{if(expanded?.row===row){if(!force){close(true);return;}focus(j);return;}close(false);expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';this.animatePoint(detail,true);focus(j);};
           for(const j of indices){const raw=r.points[j],child=button('',()=>focus(j),'lx-raw-point');child.dataset.index=String(j);child.append(el('span',String(j+1),'lx-raw-number'),el('span',timeOnly(raw.recorded_at)),el('span',raw.accuracy==null?'精度未知':Math.round(raw.accuracy)+' m','lx-muted'));detail.append(child);}
           row.openPoint=j=>open(j,true);card.append(row,detail);body.append(card);
-          if(!this.historyResolved.has(p.recorded_at))watchAddress(address);
+          if(!this.historyResolved.has(p.recorded_at)&&!this.historyFailed.has(p.recorded_at))watchAddress(address);
           // Exact coordinate groups reuse the representative address; distinct nearby points must resolve individually before merging.
           if(active!=null&&indices.includes(active)){expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';detail.hidden=false;for(const child of detail.children)child.classList.toggle('lx-raw-selected',Number(child.dataset.index)===active);}
           shown++;
@@ -542,16 +545,17 @@ class LocationPanel extends HTMLElement{
   }
   async liveAddress(d,target,full){
     const p=d.position,key=JSON.stringify([d.entity_id,d.recording_generation,p.latitude,p.longitude]);
+    if(document.hidden){target._lxRetryAt=Date.now();return;}
     this.liveAddressCache??=new Map();let entry=this.liveAddressCache.get(key);
-    if(!entry||Date.now()-entry.at>300000){
-      entry={at:Date.now(),entity:d.entity_id,generation:d.recording_generation,promise:this._hass.callWS({type:NS+'address',entity_id:d.entity_id,expected_updated_at:p.updated_at,expected_latitude:p.latitude,expected_longitude:p.longitude}).then(r=>r.address||null).catch(()=>null)};
+    if(!entry||Date.now()>=entry.until){
+      entry={until:Date.now()+300000,entity:d.entity_id,generation:d.recording_generation};
+      entry.promise=this._hass.callWS({type:NS+'address',entity_id:d.entity_id,expected_updated_at:p.updated_at,expected_latitude:p.latitude,expected_longitude:p.longitude}).then(r=>r.address||null).catch(()=>null).then(address=>{entry.until=Date.now()+(address?300000:30000);return address;});
       if(this.liveAddressCache.size>=128&&!this.liveAddressCache.has(key))this.liveAddressCache.delete(this.liveAddressCache.keys().next().value);
       this.liveAddressCache.set(key,entry);
     }
     const address=await entry.promise;
     if(target.isConnected&&this.page==='live'&&(this.liveAddressCache.get(key)===entry||(!address&&!this.liveAddressCache.has(key))))target.textContent=address?(full?address:address.replace(/^(?:[^省]{2,8}省|内蒙古自治区|广西壮族自治区|宁夏回族自治区|新疆维吾尔自治区|西藏自治区)/,'')):'地址暂不可用';
-    if(target.isConnected)target._lxRetryAt=address?0:Date.now()+30000;
-    if(!address&&this.liveAddressCache.get(key)===entry)this.liveAddressCache.delete(key);
+    if(target.isConnected)target._lxRetryAt=address?0:entry.until;
   }
   color(id){
     this.deviceColors??=new Map();const palette=['#4387e8','#0ca87d','#a855f7','#e58b25','#e05e86','#0891b2','#84a832','#c45e38'];

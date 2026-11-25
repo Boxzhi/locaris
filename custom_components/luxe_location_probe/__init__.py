@@ -251,9 +251,11 @@ async def ws_address(hass,connection,msg):
                 return
             now=now_ms()
             hit=cache.get(key)
-            if hit and now-hit[0]<WINDOW:
+            if hit and now-hit[0]<(WINDOW if hit[1] else 30000):
                 connection.send_result(msg["id"],{"address":hit[1]})
                 return
+            if hit:
+                cache.pop(key,None)
             hit=await store.run(store.cached_address,entity,lon,lat)
             if not valid():
                 connection.send_result(msg["id"],{"address":None})
@@ -278,9 +280,11 @@ async def ws_address(hass,connection,msg):
                 if not exists:
                     connection.send_result(msg["id"],{"address":None})
                     return
-            elif entity not in store.devices:
-                connection.send_result(msg["id"],{"address":None})
-                return
+            else:
+                latest=position(hass.states.get(entity)) if entity in store.devices else None
+                if not latest or (latest[1],latest[0])!=coords:
+                    connection.send_result(msg["id"],{"address":None})
+                    return
             if not store.active or not store.ready or state.get("store") is not store:
                 connection.send_result(msg["id"],{"address":None})
                 return
@@ -298,10 +302,11 @@ async def ws_address(hass,connection,msg):
             current=await store.run(lambda c:c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?",(entity,)).fetchone()) if store.active else None
             if not valid() or not current or current[0]!=generation or store.generations.get(entity,0)!=initial_generation or not store.ready or entity not in store.managed or ("recorded_at" not in msg and entity not in store.devices):
                 address=None
-            if address and "recorded_at" in msg:
+            if valid() and "recorded_at" in msg:
                 exists=await store.run(lambda c:c.execute("SELECT 1 FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
                 if not exists or not valid():
-                    address=None
+                    connection.send_result(msg["id"],{"address":None})
+                    return
             if isinstance(address,str) and address:
                 address=address[:1024]
                 await store.run(store.save_address,entity,lon,lat,address)
@@ -311,6 +316,11 @@ async def ws_address(hass,connection,msg):
                     if len(cache)>=2048:
                         cache.pop(next(iter(cache)))
                     cache[key]=(now_ms(),address)
+            elif valid():
+                # Brief, memory-only negative cache avoids repeating failed lookups.
+                if len(cache)>=2048 and key not in cache:
+                    cache.pop(next(iter(cache)))
+                cache[key]=(now_ms(),None)
         connection.send_result(msg["id"],{"address":address if valid() and isinstance(address,str) else None})
 
 async def async_setup(hass, config):
@@ -339,7 +349,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_sessions"] = {}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.25.1-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.26-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)
