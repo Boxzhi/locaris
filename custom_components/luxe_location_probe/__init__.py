@@ -85,7 +85,7 @@ async def ws_storage(hass, connection, msg):
             pos = position(state)
             item = {"entity_id":entity,"name":state.name if state else entity,
                 "managed":entity in store.managed,"enabled":entity in store.devices,
-                "available":pos is not None}
+                "available":pos is not None,"recording_generation":store.generations.get(entity,0)}
             if msg["include_position"] and entity in store.managed and entity in store.devices and pos is not None:
                 item["position"] = {"latitude":pos[0],"longitude":pos[1],"accuracy":pos[2],
                     "updated_at":int(state.last_updated.timestamp()*1000)}
@@ -189,7 +189,7 @@ class MapProxy(HomeAssistantView):
         except Exception:
             return web.Response(status=502)
 
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN+"/address",vol.Required("entity_id"):str,vol.Optional("recorded_at"):int})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN+"/address",vol.Required("entity_id"):str,vol.Optional("recorded_at"):int,vol.Optional("expected_updated_at"):int,vol.Optional("expected_latitude"):vol.Coerce(float),vol.Optional("expected_longitude"):vol.Coerce(float)})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_address(hass,connection,msg):
@@ -215,7 +215,11 @@ async def ws_address(hass,connection,msg):
             row=await store.run(lambda c:c.execute("SELECT longitude,latitude FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
             coords=tuple(row) if row else None
         else:
-            p=position(hass.states.get(entity)) if entity in store.devices else None
+            current_state=hass.states.get(entity)
+            p=position(current_state) if entity in store.devices else None
+            if p and ("expected_updated_at" in msg or "expected_latitude" in msg or "expected_longitude" in msg):
+                if (msg.get("expected_updated_at")!=int(current_state.last_updated.timestamp()*1000) or msg.get("expected_latitude")!=p[0] or msg.get("expected_longitude")!=p[1]):
+                    p=None
             coords=(p[1],p[0]) if p else None
     if not coords:
         connection.send_result(msg["id"],{"address":None})
@@ -330,7 +334,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_sessions"] = {}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.21.1-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.22-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)
