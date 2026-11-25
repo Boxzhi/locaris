@@ -50,6 +50,7 @@ class Store:
         self.discovery = None
         self.importing = {}
         self.retry_import = {}
+        self.recovery_from = {}
         self.backfill_active = set()
         self.backfill_pending = {}
         self.pending_writes = 0
@@ -238,6 +239,7 @@ class Store:
         self.generations[entity] = self.generations.get(entity, 0) + 1
         self.last_valid.pop(entity, None)
         self.retry_import.pop(entity, None)
+        self.recovery_from.pop(entity, None)
         self.backfill_pending.pop(entity, None)
 
     @callback
@@ -255,11 +257,24 @@ class Store:
         self.backfill_pending.pop(entity, None)
         self.backfill_active.add(key)
         self.importing[entity] = generation
-        if self.spawn(self.backfill(entity, generation)) is None:
+        task = self.spawn(self.backfill(entity, generation))
+        if task is None:
             self.backfill_active.discard(key)
             if self.importing.get(entity) == generation:
                 self.importing.pop(entity, None)
             self.defer_backfill(entity, generation)
+            return
+        task.add_done_callback(lambda completed: self.backfill_finished(entity, generation, completed))
+
+    @callback
+    def backfill_finished(self, entity, generation, task):
+        # A task cancelled before its first instruction never reaches its finally.
+        self.backfill_active.discard((entity, generation))
+        if self.importing.get(entity) == generation:
+            self.importing.pop(entity, None)
+        if task.cancelled():
+            self.defer_backfill(entity, generation)
+        self.drain_backfills()
 
     @callback
     def drain_backfills(self):
@@ -322,12 +337,12 @@ class Store:
             return
         generation = self.generations.get(entity, 0)
         if self.pending_writes >= 256:
-            self.defer_backfill(entity, generation)
+            self.defer_backfill(entity, generation, p[0])
             self.warn("Location write queue full; Recorder recovery requested (no coordinates logged)")
             return
         task = self.spawn(self.write(entity, p, generation))
         if task is None:
-            self.defer_backfill(entity, generation)
+            self.defer_backfill(entity, generation, p[0])
             return
         self.pending_writes += 1
         task.add_done_callback(self.write_finished)
@@ -357,7 +372,7 @@ class Store:
                 if self.active and self.ready and entity in self.devices and self.generations.get(entity, 0) == generation:
                     await self.run(self.insert, entity, [p], "state_change")
         except Exception:
-            self.defer_backfill(entity, generation)
+            self.defer_backfill(entity, generation, p[0])
             self.warn("Location probe write failed (no coordinates logged)")
 
     async def enable(self, entity, import_history):
@@ -402,9 +417,11 @@ class Store:
         ready = getattr(recorder, "async_db_ready", None)
         return bool(ready is not None and ready.done() and not ready.cancelled() and ready.result() and getattr(recorder, "recording", True) and getattr(recorder, "enabled", True))
 
-    def defer_backfill(self, entity, generation):
+    def defer_backfill(self, entity, generation, recorded_at=None):
         if self.active and entity in self.devices and self.generations.get(entity, 0) == generation:
             self.retry_import.setdefault(entity, time.monotonic() + 300)
+            if recorded_at is not None:
+                self.recovery_from[entity] = min(recorded_at, self.recovery_from.get(entity, recorded_at))
 
     async def backfill(self, entity, generation):
         try:
@@ -423,7 +440,8 @@ class Store:
             # Respect long Recorder commit intervals before advancing the cursor.
             delay = max(120000, int(getattr(recorder, "commit_interval", 5)*2000+30000))
             end = now_ms() - delay
-            start = max(earliest, cursor - 300000, now_ms() - WINDOW)
+            recovery = self.recovery_from.get(entity)
+            start = max(earliest, min(cursor - 300000, recovery) if recovery is not None else cursor - 300000, now_ms() - WINDOW)
             # Query with one millisecond of overlap at strict Recorder boundaries.
             # The explicit half-open filter below prevents synthetic or future rows.
             # Carry the last valid payload across windows, not across consent changes.
@@ -471,16 +489,16 @@ class Store:
                         return
                     await self.run(self.insert, entity, rows, "recorder", stop)
                 start = stop
+            if self.active and entity in self.devices and self.generations.get(entity, 0) == generation and recovery is not None:
+                if end <= recovery:
+                    self.defer_backfill(entity, generation)
+                elif entity not in self.retry_import and self.recovery_from.get(entity) == recovery:
+                    self.recovery_from.pop(entity, None)
         except asyncio.CancelledError:
             raise
         except Exception:
             self.defer_backfill(entity, generation)
             self.warn("Location probe Recorder import failed (no coordinates logged)")
-        finally:
-            self.backfill_active.discard((entity, generation))
-            if self.importing.get(entity) == generation:
-                self.importing.pop(entity, None)
-            self.drain_backfills()
 
     def checkpoint(self):
         with closing(sqlite3.connect(self.path.as_uri()+"?mode=rw", uri=True, timeout=3)) as con:
@@ -599,6 +617,7 @@ class Store:
                     self.initialized = False
             self.importing.clear()
             self.retry_import.clear()
+            self.recovery_from.clear()
             self.backfill_active.clear()
             self.backfill_pending.clear()
             self.last_valid.clear()
