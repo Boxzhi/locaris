@@ -1,7 +1,7 @@
-const VERSION='0.1.50-preview';
+const VERSION='0.1.51-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
-const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:850,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
+const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
 let sdkPromise,sdkSession,sdkConfigPromise;
 const expiredMapSession=e=>e?.code==='session_expired'||String(e?.message||e).includes('Map session expired; reload panel');
 async function ensureSdkConfig(hass){
@@ -50,7 +50,7 @@ class LocationPanel extends HTMLElement{
     html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--primary-background-color,#131820);overscroll-behavior:none}luxe-location-probe{display:block;height:100vh;height:var(--lx-viewport,100dvh);width:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--primary-text-color,#e7eaf0);background:var(--lx-host-bg,var(--primary-background-color,#131820));-webkit-text-size-adjust:100%;text-size-adjust:100%;--lx-accent:var(--primary-color,#4387e8);--lx-card:var(--card-background-color,#202733);--lx-line:var(--divider-color,#394453)}
     luxe-location-probe *{box-sizing:border-box}.lx-shell{height:100%;min-height:0;display:flex;flex-direction:column;gap:10px;padding:10px;overflow:hidden}
     .lx-head,.lx-tabs,.lx-row,.lx-title{display:flex;align-items:center;gap:10px}
-    .lx-head{flex:none;min-height:44px}.lx-menu{display:none}.lx-map-tools summary{list-style:none;cursor:pointer;padding:7px;display:flex}.lx-map-tools summary::-webkit-details-marker{display:none}.lx-map-tools details:not([open]) button{display:none}.lx-map-tools details button{display:block;width:100%}.lx-list-row[data-focus]{cursor:pointer}.lx-list-row[data-focus]:hover{background:var(--secondary-background-color,#293441)}.lx-marker{width:32px;height:32px;border:2px solid white;border-radius:50%;display:grid;place-items:center;color:white;font:bold 13px sans-serif;box-shadow:0 2px 8px #0006}.lx-marker-label{background:#182330;color:white;padding:3px 7px;border-radius:6px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px sans-serif;margin-top:3px;text-align:center}.lx-head h1{font-size:21px;margin:0;font-weight:650;flex:1}.lx-tabs{gap:4px;flex:none}
+    .lx-head{flex:none;min-height:44px}.lx-menu{display:none}.lx-map-tools summary{list-style:none;cursor:pointer;padding:7px;display:flex}.lx-map-tools summary::-webkit-details-marker{display:none}.lx-map-tools details:not([open]) button{display:none}.lx-map-tools details button{display:block;width:100%}.lx-list-row[data-focus]{cursor:pointer}.lx-list-row[data-focus]:hover{background:var(--secondary-background-color,#293441)}.lx-marker{width:32px;height:32px;border:2px solid white;border-radius:50%;display:grid;place-items:center;color:white;font:bold 13px sans-serif;box-shadow:0 2px 8px #0006}.lx-head h1{font-size:21px;margin:0;font-weight:650;flex:1}.lx-tabs{gap:4px;flex:none}
     luxe-location-probe button{font:inherit;color:inherit;cursor:pointer;background:transparent;border:0;border-radius:9px;padding:8px 12px}
     luxe-location-probe button:focus-visible{outline:2px solid var(--lx-accent);outline-offset:1px}
     luxe-location-probe button:disabled{opacity:.5;cursor:default}
@@ -711,12 +711,11 @@ class LocationPanel extends HTMLElement{
       const p=d.position,xy=this.gcj(p.longitude,p.latitude),color=this.color(d.entity_id);
       let m=this.markers.get(d.entity_id);
       if(!m){
-        const content=el('div'),dot=el('div',Array.from(d.name)[0]||'•','lx-marker');dot.style.background=color;
-        const label=el('div',d.name,'lx-marker-label');content.append(dot,label);
-        const marker=new A.Marker({position:xy,content,anchor:'center',offset:new A.Pixel(0,0),title:d.name});
-        marker.on('click',()=>{if(this.map===map&&this.markers.get(d.entity_id)?.marker===marker){this.focusDevice(d.entity_id);this.drawSide();this.revealLiveDevice(d.entity_id);}});map.add(marker);m={marker,circle:null,xy,dot,label,name:d.name};this.markers.set(d.entity_id,m);this.clusterSignature=null;
+        const dot=el('div',Array.from(d.name)[0]||'•','lx-marker');dot.style.background=color;dot.setAttribute('aria-label',d.name);
+        const marker=new A.Marker({position:xy,content:dot,anchor:'center',offset:new A.Pixel(0,0),title:d.name});
+        marker.on('click',()=>{if(this.map===map&&this.markers.get(d.entity_id)?.marker===marker){this.focusDevice(d.entity_id);this.drawSide();this.revealLiveDevice(d.entity_id);}});map.add(marker);m={marker,circle:null,xy,dot,name:d.name};this.markers.set(d.entity_id,m);this.clusterSignature=null;
       }
-      if(m.name!==d.name){m.name=d.name;m.dot.textContent=Array.from(d.name)[0]||'•';m.label.textContent=d.name;m.marker.setTitle?.(d.name);}const moved=m.xy[0]!==xy[0]||m.xy[1]!==xy[1];if(moved){m.xy=xy;m.marker.setPosition(xy);}
+      if(m.name!==d.name){m.name=d.name;m.dot.textContent=Array.from(d.name)[0]||'•';m.dot.setAttribute('aria-label',d.name);m.marker.setTitle?.(d.name);}const moved=m.xy[0]!==xy[0]||m.xy[1]!==xy[1];if(moved){m.xy=xy;m.marker.setPosition(xy);}
       if(Number.isFinite(p.accuracy)&&p.accuracy>0){
         if(!m.circle){m.circle=new A.Circle({center:xy,radius:p.accuracy,strokeColor:color,strokeOpacity:.65,strokeWeight:1,fillColor:color,fillOpacity:.12,zIndex:5});map.add(m.circle);this.clusterSignature=null;}
         else{if(moved)m.circle.setCenter(xy);if(m.accuracy!==p.accuracy)m.circle.setRadius(p.accuracy);}
@@ -793,8 +792,8 @@ class LocationPanel extends HTMLElement{
       }
       for(const v of group){v.m.marker.hide();if(v.m.circle)v.m.circle.hide();}
       const center=[group.reduce((a,v)=>a+v.m.xy[0],0)/group.length,group.reduce((a,v)=>a+v.m.xy[1],0)/group.length];
-      const content=el('div'),dot=el('div',String(group.length),'lx-marker');dot.style.background='#4387e8';content.append(dot,el('div',group.length+' 台设备','lx-marker-label'));
-      const marker=new A.Marker({position:center,content,anchor:'center',zIndex:130});
+      const dot=el('div',String(group.length),'lx-marker');dot.style.background='#4387e8';dot.setAttribute('aria-label',group.length+' 台设备');
+      const marker=new A.Marker({position:center,content:dot,anchor:'center',zIndex:130});
       marker.on('click',()=>{if(this.map===map&&this.liveClusters.includes(marker))this.expandLiveCluster(group,center);});this.liveClusters.push(marker);
     }
     if(this.liveClusters.length)map.add(this.liveClusters);this.clusterSignature=signature;
