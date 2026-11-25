@@ -47,7 +47,7 @@ def ws_config(hass, connection, msg):
     token = secrets.token_urlsafe(32)
     sessions[token] = {"expires":now+43200,"times":[],"user":connection.user.id}
     connection.send_result(msg["id"], {"map_key":data["map_key"],"proxy_path":"/api/luxe_location/"+token+"/_AMapService"})
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove"]), vol.Optional("entity_id"): str, vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove"]), vol.Optional("entity_id"): str, vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool, vol.Optional("include_storage", default=True): bool})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_storage(hass, connection, msg):
@@ -57,7 +57,9 @@ async def ws_storage(hass, connection, msg):
         return
     try:
         action = msg["action"]
-        await store.discover()
+        # Discovery is already scheduled every minute by Store.
+        if action != "list":
+            await store.discover()
         if not store.active or not store.ready:
             connection.send_error(msg["id"], "not_loaded", "Storage not ready")
             return
@@ -74,7 +76,7 @@ async def ws_storage(hass, connection, msg):
             for key in list(cache):
                 if key[0] == msg.get("entity_id"):
                     cache.pop(key,None)
-        stats = await store.storage_stats()
+        stats = await store.storage_stats() if msg["include_storage"] else None
         if not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store:
             connection.send_error(msg["id"], "not_loaded", "Storage not ready")
             return
@@ -89,7 +91,7 @@ async def ws_storage(hass, connection, msg):
                 item["position"] = {"latitude":pos[0],"longitude":pos[1],"accuracy":pos[2],
                     "updated_at":int(state.last_updated.timestamp()*1000)}
             devices.append(item)
-        connection.send_result(msg["id"], {"candidates":devices,"storage":stats})
+        connection.send_result(msg["id"], {"candidates":devices, **({"storage":stats} if stats is not None else {})})
     except ValueError:
         connection.send_error(msg["id"], "invalid_device", "Invalid GPS device")
     except Exception:
@@ -337,7 +339,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_sessions"] = {}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.23.2-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.24-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)

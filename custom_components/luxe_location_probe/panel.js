@@ -1,4 +1,4 @@
-const VERSION='0.1.23.2-preview';
+const VERSION='0.1.24-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -185,14 +185,14 @@ class LocationPanel extends HTMLElement{
     const job=this.pendingActions.shift()||(this.refreshNeeded?{action:'list'}:null);
     if(!job)return;
     this.refreshNeeded=false;
-    const epoch=this.epoch,token={key:job.key},live=this.page==='live';
+    const epoch=this.epoch,token={key:job.key},live=this.page==='live',settings=this.page==='settings';
     this.refreshToken=token;
     const current=()=>this.isConnected&&this.epoch===epoch&&this.refreshToken===token;
     const active=()=>current()&&this._hass?.user?.is_admin;
     try{
-      const r=await this._hass.callWS({type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live});
+      const r=await this._hass.callWS({type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live,include_storage:settings});
       if(!active())return;
-      if(live!==(this.page==='live')){this.refreshNeeded=true;return;}
+      if(live!==(this.page==='live')||settings!==(this.page==='settings')){this.refreshNeeded=true;return;}
       this.data=r;this.pruneLiveAddresses();this.status();this.updateData();
     }catch(e){if(current()){this.status('操作失败：'+String(e.message||e));}}
     finally{if(current()){this.refreshToken=null;this.drainRefresh();}}
@@ -656,7 +656,7 @@ class LocationPanel extends HTMLElement{
       stack.append(el('p','首次开启历史记录自动导入可用历史；关闭后保留已有数据。仅对已有位置共享许可的设备开启记录。','lx-muted'));
     }else{
       const d=data.storage,card=el('section',undefined,'lx-card');card.append(el('h2','数据存储'));
-      for(const [name,value] of [['历史保留',String(d.retention_days)+' 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.location_count)],['最近清理',fmt(d.last_cleanup)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
+      if(!d)card.append(el('p','正在读取存储信息…','lx-muted'));else for(const [name,value] of [['历史保留',String(d.retention_days)+' 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.location_count)],['最近清理',fmt(d.last_cleanup)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
       stack.append(card);
 
       const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);

@@ -307,19 +307,20 @@ class Store:
                 begin_dt = datetime.fromtimestamp(start / 1000, timezone.utc)
                 end_dt = datetime.fromtimestamp(stop / 1000, timezone.utc)
                 def read():
-                    return history.get_significant_states(self.hass, begin_dt, end_dt, [entity],
+                    result = history.get_significant_states(self.hass, begin_dt, end_dt, [entity],
                         include_start_time_state=False, significant_changes_only=False,
                         minimal_response=False, no_attributes=False)
-                result = await get_instance(self.hass).async_add_executor_job(read)
-                rows = []
-                prev = None
-                for state in result.get(entity, []):
-                    p = point(state)
-                    if p is None:
-                        continue
-                    if prev is None or p[1:] != prev:
-                        rows.append(p)
-                    prev = p[1:]
+                    rows = []
+                    prev = None
+                    for state in result.get(entity, []):
+                        p = point(state)
+                        if p is None:
+                            continue
+                        if prev is None or p[1:] != prev:
+                            rows.append(p)
+                        prev = p[1:]
+                    return rows
+                rows = await get_instance(self.hass).async_add_executor_job(read)
                 async with self.lock:
                     if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
                         return
@@ -385,9 +386,8 @@ class Store:
     async def storage_stats(self):
         def read(con):
             cutoff = now_ms() - WINDOW
-            location_count = con.execute("""SELECT COUNT(l.recorded_at)
-                FROM probe_devices d JOIN probe_locations l
-                ON d.entity_id=l.entity_id WHERE l.recorded_at>=?""",
+            # Foreign keys guarantee every location belongs to a stored device.
+            location_count = con.execute("""SELECT COUNT(*) FROM probe_locations WHERE recorded_at>=?""",
                 (cutoff,)).fetchone()[0]
             address_count = con.execute(
                 "SELECT COUNT(*) FROM probe_address_cache WHERE created_at>=?",
