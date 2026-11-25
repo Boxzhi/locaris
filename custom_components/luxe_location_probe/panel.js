@@ -1,9 +1,10 @@
-const VERSION='0.1.54-preview';
+const VERSION='0.1.55-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
 let sdkPromise,sdkSession,sdkConfigPromise;
 const WEBGL_SAFE_KEY='luxe_location.webgl_safe_session';
+const WEBGL_FORCE_RETRY_KEY='luxe_location.webgl_force_retry_session';
 let sdkDiagnostic={version:VERSION,sdk_status:'not_loaded'};
 function probeWebGL(strict){
   // Use separate canvases for different context attributes and release probes.
@@ -22,14 +23,36 @@ function probeWebGL(strict){
 }
 function configureWebGL(){
   const strict=probeWebGL(true),relaxed=strict||probeWebGL(false);
-  let safe=false;try{safe=sessionStorage.getItem(WEBGL_SAFE_KEY)==='1';}catch(e){}
-  const force=!!(!strict&&relaxed&&!safe);
+  let safe=false,forceRetry=false;
+  try{safe=sessionStorage.getItem(WEBGL_SAFE_KEY)==='1';forceRetry=sessionStorage.getItem(WEBGL_FORCE_RETRY_KEY)==='1';}catch(e){}
+  const force=!!(relaxed&&!safe&&(!strict||forceRetry));
   if(force)window.forceWebGL=true;
   else if(window.forceWebGL===true)delete window.forceWebGL;
   if(safe)window.forbidenWebGL=true;
+  else if(window.forbidenWebGL===true)delete window.forbidenWebGL;
   sdkDiagnostic={version:VERSION,sdk_status:'loading',webgl_strict:strict,webgl_relaxed:relaxed,
-    relaxed_tested:!strict,force_webgl:force,safe_session:safe,sdk_is_webgl:null,
+    relaxed_tested:!strict,force_webgl:force,safe_session:safe,force_retry_session:forceRetry,
+    webgl_correction:'not_checked',sdk_is_webgl:null,
     requested_layer:null,reported_style:null,map_status:'not_created'};
+}
+function correctWebGLMismatch(){
+  const d=sdkDiagnostic;
+  if(d.safe_session){d.webgl_correction='safe_mode';return false;}
+  if(!d.webgl_relaxed){d.webgl_correction='unavailable';return false;}
+  if(d.sdk_is_webgl===true){d.webgl_correction=d.force_webgl?'forced_supported':'not_needed';return false;}
+  if(d.sdk_is_webgl!==false){d.webgl_correction='sdk_unknown';return false;}
+  // SDK already loaded with force, or a retry was recorded before reload.
+  // The SDK may still select raster; do not create a refresh loop.
+  if(d.webgl_correction==='reload_requested')return true;
+  if(d.webgl_correction==='storage_unavailable'||d.webgl_correction==='reload_failed')return false;
+  if(d.force_webgl||d.force_retry_session){d.webgl_correction='forced_rejected';return false;}
+  try{
+    sessionStorage.setItem(WEBGL_FORCE_RETRY_KEY,'1');
+    if(sessionStorage.getItem(WEBGL_FORCE_RETRY_KEY)!=='1')throw new Error('session storage unavailable');
+  }catch(e){d.webgl_correction='storage_unavailable';return false;}
+  d.force_retry_session=true;d.webgl_correction='reload_requested';
+  try{location.reload();return true;}
+  catch(e){d.webgl_correction='reload_failed';return false;}
 }
 function recordMapDiagnostic(map,layer){
   sdkDiagnostic.requested_layer=layer;
@@ -43,7 +66,7 @@ function restartRaster(){
   location.reload();return true;
 }
 function restartAutomatic(){
-  try{sessionStorage.removeItem(WEBGL_SAFE_KEY);}catch(e){return false;}
+  try{sessionStorage.removeItem(WEBGL_SAFE_KEY);sessionStorage.removeItem(WEBGL_FORCE_RETRY_KEY);}catch(e){return false;}
   location.reload();return true;
 }
 const expiredMapSession=e=>e?.code==='session_expired'||String(e?.message||e).includes('Map session expired; reload panel');
@@ -425,6 +448,7 @@ class LocationPanel extends HTMLElement{
     try{
       const config=await ensureSdkConfig(this._hass);if(!valid())return;
       const A=await sdk(config);if(!valid())return;
+      if(correctWebGLMismatch()){sdkDiagnostic.map_status='reloading';this.mapStatus(target,'正在调整地图渲染兼容性…');return;}
       this.A=A;this.vectorLayer=A.createDefaultLayer({visible:true});
       const initialStyle=this.mapLayer==='dark'?'dark':'normal';
       map=new A.Map(target,{zoom:5,viewMode:'2D',mapStyle:'amap://styles/'+initialStyle,layers:[this.vectorLayer],resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});this.map=map;this.appliedLayer=initialStyle==='dark'?'dark':'standard';this.vectorStyle=initialStyle;this.satelliteLayers=null;
@@ -903,7 +927,7 @@ class LocationPanel extends HTMLElement{
     details.append(output);
     details.append(el('p','SDK 能力和样式报告不代表实际画面已成功渲染。诊断不包含定位坐标、地图密钥或代理地址。','lx-muted'));
     details.append(button('输出诊断到控制台',()=>console.info('[LUXE Location] '+JSON.stringify(sdkDiagnostic))));
-    if(sdkDiagnostic.safe_session)details.append(button('恢复自动渲染检测',()=>{if(!restartAutomatic())this.status('无法恢复自动检测，请重新打开位置中心');}));
+    if(sdkDiagnostic.safe_session||sdkDiagnostic.force_retry_session)details.append(button('恢复自动渲染检测',()=>{if(!restartAutomatic())this.status('无法恢复自动检测，请重新打开位置中心');}));
     return details;
   }
   drawRuntimePolicy(){
