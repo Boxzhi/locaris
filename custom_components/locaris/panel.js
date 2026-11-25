@@ -1,4 +1,4 @@
-const VERSION='0.2.11-preview';
+const VERSION='0.2.12-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,HISTORY_TODAY_MS:10000,HISTORY_PENDING_MS:5000,HISTORY_PAST_MS:60000,READ_TIMEOUT_MS:15000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:400,MAP_MEDIUM_MS:600,MAP_FAR_MS:800,MAP_LONG_MS:1000,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
@@ -489,7 +489,7 @@ class LocationPanel extends HTMLElement{
       if(devices.some(d=>d.entity_id===old))select.value=old;
       const day=el('input');day.type='hidden';day.dataset.historyDate='1';
       const local=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
-      const today=new Date(),min=new Date(today),yesterday=new Date(today);min.setDate(min.getDate()-(TIMING.HISTORY_DAYS-1));yesterday.setDate(yesterday.getDate()-1);
+      const today=new Date(),min=new Date(today);min.setDate(min.getDate()-(TIMING.HISTORY_DAYS-1));
       const maxDate=local(today),minDate=local(min);day.value=date&&date>=minDate&&date<=maxDate?date:maxDate;
       const calendar=el('div',undefined,'lx-calendar-wrap'),trigger=button('',()=>{if(!popup.hidden){dismiss();return;}popup.hidden=false;trigger.setAttribute('aria-expanded','true');month=new Date(day.value+'T00:00:00');month.setDate(1);drawCalendar();document.addEventListener('pointerdown',outside,true);this.calendarOutside=outside;},'lx-field lx-date-trigger');
       trigger.setAttribute('aria-label','选择日期');trigger.setAttribute('aria-expanded','false');
@@ -497,7 +497,7 @@ class LocationPanel extends HTMLElement{
       const dismiss=()=>{popup.hidden=true;trigger.setAttribute('aria-expanded','false');document.removeEventListener('pointerdown',outside,true);if(this.calendarOutside===outside)this.calendarOutside=null;};
       const outside=e=>{if(!(e.composedPath?.()||[]).includes(calendar)&&!calendar.contains(e.target))dismiss();};this.calendarDismiss=dismiss;
       let month=new Date(day.value+'T00:00:00');month.setDate(1);
-      const updateLabel=()=>{trigger.replaceChildren(el('span','▦'),el('span',formatDay(new Date(day.value+'T00:00:00'))),el('span','⌄','lx-date-arrow'));};
+      const updateLabel=()=>{trigger.replaceChildren(el('span','▦'),el('span',day.value),el('span','⌄','lx-date-arrow'));};
       const choose=value=>{if(value<minDate||value>maxDate)return;const changed=day.value!==value;day.value=value;dismiss();updateLabel();trigger.focus({preventScroll:true});if(changed)this.loadHistory();};
       const drawCalendar=()=>{
         popup.replaceChildren();const header=el('div',undefined,'lx-cal-header');
@@ -511,11 +511,10 @@ class LocationPanel extends HTMLElement{
         for(let i=0;i<month.getDay();i++)grid.append(el('span'));
         const count=new Date(month.getFullYear(),month.getMonth()+1,0).getDate();
         for(let i=1;i<=count;i++){
-          const value=local(new Date(month.getFullYear(),month.getMonth(),i)),cell=button(String(i),()=>choose(value));
+          const value=local(new Date(month.getFullYear(),month.getMonth(),i)),cell=button(value===maxDate?'今':String(i),()=>choose(value));
           cell.disabled=value<minDate||value>maxDate;cell.setAttribute('aria-pressed',String(value===day.value));cell.setAttribute('aria-label',value);
           if(value===maxDate)cell.classList.add('lx-cal-today');grid.append(cell);
         }popup.append(grid);
-        const footer=el('div',undefined,'lx-cal-header');footer.append(button('昨日',()=>choose(local(yesterday))),button('今日',()=>choose(maxDate)));popup.append(footer);
       };
       calendar.append(trigger,day,popup);calendar.onkeydown=e=>{if(e.key==='Escape'){dismiss();trigger.focus();}};
       updateLabel();

@@ -94,7 +94,6 @@ test('shared timestamp formats today, yesterday, earlier date and previous year'
   assert.equal(context.day(new Date(2026,10,24),now),'昨日');
   assert.equal(context.day(new Date(2026,10,23),now),'11-23');
   assert.equal(context.day(new Date(2025,10,23),now),'2025-11-23');
-  assert.match(source,/formatDay\(new Date\(day.value\+'T00:00:00'\)\)/);
   assert.match(source,/fmt\(d.last_cleanup\)/);
 });
 test('empty history reference hides count and redundant explanation, retains timestamp',()=>{
@@ -106,4 +105,20 @@ test('empty history reference hides count and redundant explanation, retains tim
   assert.doesNotMatch(branch,/当日无定位变化记录|0 个位置 · 0 条记录/);
   assert.match(source,/if\(!r.points.length\)\{count.remove\(\);return;\}/);
   assert.match(source,/liveTime\(t\)\{return fmt\(t,new Date\(\),'定位时间未知'\);\}/);
+});
+
+
+test('history calendar shows full ISO local date, labels today and removes quick actions',()=>{
+  const start=source.indexOf('const updateLabel=()=>{trigger.replaceChildren');
+  const end=source.indexOf('calendar.append(trigger,day,popup)',start);
+  const calendar=source.slice(start,end);
+  assert.ok(start>=0&&end>start);
+  assert.match(calendar,/el\('span',day.value\)/);
+  assert.doesNotMatch(calendar,/formatDay\(/);
+  assert.match(calendar,/cell=button\(value===maxDate\?'今':String\(i\),\(\)=>choose\(value\)\)/);
+  assert.match(calendar,/cell.setAttribute\('aria-label',value\)/);
+  assert.match(calendar,/if\(value===maxDate\)cell.classList.add\('lx-cal-today'\)/);
+  assert.match(calendar,/cell.disabled=value<minDate\|\|value>maxDate/);
+  assert.doesNotMatch(calendar,/const footer=|button\('昨日'|button\('今日'/);
+  assert.match(source,/\.lx-cal-today:not\(\[aria-pressed=true\]\)\{color:var\(--lx-accent\);font-weight:bold\}/);
 });
