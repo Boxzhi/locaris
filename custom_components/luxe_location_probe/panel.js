@@ -1,4 +1,4 @@
-const VERSION='0.1.44-preview';
+const VERSION='0.1.44.1-preview';
 let sdkPromise,sdkSession,sdkConfigPromise;
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<30*60000)return sdkSession.config;
@@ -34,8 +34,8 @@ class LocationPanel extends HTMLElement{
     if(this.isConnected&&this.accessRevoked){if(v?.user?.is_admin){this.accessRevoked=false;this.connectedCallback();}return;}
     if(this.isConnected&&this.viewportResize&&(old?.themes!==v?.themes||old?.user!==v?.user))this.syncHostLayout();
     if(this.isConnected&&!this.started)this.start();
-    if(this.started&&v?.connected===false){this.pendingActions=[];this.status('HA 连接已断开');return;}
-    if(this.started&&old?.connected===false&&v?.connected!==false&&!document.hidden){this.status();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'&&!this.historyData)this.loadHistory();}
+    if(this.started&&v?.connected===false){this.pendingActions=[];if(old?.connected!==false)this.status('HA 连接已断开');return;}
+    if(this.started&&old?.connected===false&&v?.connected!==false&&!document.hidden){this.status();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData)this.loadHistory();else this.drainHistoryAddresses();}}
     if(this.started&&this.page==='live'&&old?.states&&v?.states&&this.data?.candidates?.some(d=>d.managed&&d.enabled&&(old.states[d.entity_id]?.last_updated!==v.states[d.entity_id]?.last_updated||old.states[d.entity_id]?.state!==v.states[d.entity_id]?.state)))this.liveDirty=true;
   }
   connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('luxe_location.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
@@ -179,7 +179,7 @@ class LocationPanel extends HTMLElement{
     else this.refresh();
     if(this.isConnected&&epoch===this.epoch){
       this.timer=setInterval(()=>this.refreshTick(),5000);
-      this.visibilityHandler=()=>{if(!document.hidden){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history')this.drainHistoryAddresses();}};
+      this.visibilityHandler=()=>{if(!document.hidden){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){if(!this.historyData&&this._hass?.connected!==false)this.loadHistory();else this.drainHistoryAddresses();}}};
       document.addEventListener('visibilitychange',this.visibilityHandler);
     }
   }
@@ -507,10 +507,11 @@ class LocationPanel extends HTMLElement{
   }
   async loadHistory(){
     const select=this.querySelector('.lx-history-filter select'),day=this.querySelector('[data-history-date]'),timeline=this.querySelector('#history-timeline');
-    if(!select||!day||!timeline||!this._hass?.user?.is_admin||this._hass.connected===false)return;
+    if(!select||!day||!timeline||!this._hass?.user?.is_admin)return;
     this.stopHistoryAddresses();this.historyResolved=new Map();this.historyFailed=new Set();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyFlags=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.closeHistoryPoint=null;this.paintHistory();
     timeline.replaceChildren(el('h2','定位时间轴'));
     if(!select.value||!day.value){timeline.append(this.stateView(this.data?'暂无可查询设备':this.dataError||'正在读取设备…'));return;}
+    if(this._hass.connected===false){timeline.append(this.stateView('HA 连接已断开'));return;}
     const start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
     timeline.append(this.stateView('正在加载…'));
     try{
@@ -658,7 +659,7 @@ class LocationPanel extends HTMLElement{
   async liveAddress(d,target,full){
     const p=d.position,key=JSON.stringify([d.entity_id,d.recording_generation,p.latitude,p.longitude]);
     const token={};target._lxAddressToken=token;target._lxRetryAt=0;
-    if(document.hidden){target._lxRetryAt=Date.now();return;}
+    if(document.hidden||this._hass?.connected===false){target._lxRetryAt=Date.now();return;}
     this.liveAddressCache??=new Map();let entry=this.liveAddressCache.get(key);
     if(!entry||Date.now()>=entry.until){
       entry={until:Date.now()+300000,entity:d.entity_id,generation:d.recording_generation};

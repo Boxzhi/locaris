@@ -351,14 +351,14 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
                 if not exists:
                     connection.send_result(msg["id"],{"address":None})
                     return
-            else:
+            if not await current_admin(hass, connection) or not valid():
+                connection.send_result(msg["id"],{"address":None})
+                return
+            if "recorded_at" not in msg:
                 latest=position(hass.states.get(entity)) if entity in store.devices else None
                 if not latest or (latest[1],latest[0])!=coords:
                     connection.send_result(msg["id"],{"address":None})
                     return
-            if not await current_admin(hass, connection) or not valid():
-                connection.send_result(msg["id"],{"address":None})
-                return
             service_key=active["service_key"]
         runtime["last_request"]=time.monotonic()
         address=None
@@ -422,7 +422,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.44-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.44.1-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)
