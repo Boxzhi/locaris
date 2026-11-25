@@ -7,7 +7,6 @@ import time
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from datetime import datetime, timedelta, timezone
 from .location_store import now_ms, WINDOW
 import voluptuous as vol
 from homeassistant.components import frontend, panel_custom, websocket_api
@@ -334,7 +333,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_sessions"] = {}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.22.1-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.23-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)
