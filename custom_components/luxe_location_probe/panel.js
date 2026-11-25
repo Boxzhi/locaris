@@ -1,4 +1,4 @@
-const VERSION='0.1.9-preview';
+const VERSION='0.1.10-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -50,7 +50,7 @@ class LocationPanel extends HTMLElement{
     .lx-device-head{display:flex;align-items:center;gap:10px}.lx-avatar{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--secondary-background-color,#293441);color:var(--lx-accent);flex:none}.lx-name{flex:1;min-width:0;overflow-wrap:anywhere}
     .lx-switch{display:flex;align-items:center;gap:8px;cursor:pointer}.lx-switch input{appearance:none;-webkit-appearance:none;width:42px;height:24px;border-radius:20px;background:#78838e;position:relative;cursor:pointer;margin:0}.lx-switch input:checked{background:var(--lx-accent)}.lx-switch input:before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;background:white;border-radius:50%;transition:transform .15s}.lx-switch input:checked:before{transform:translateX(18px)}
     .lx-more{position:relative}.lx-more summary{cursor:pointer;list-style:none;padding:8px}.lx-more summary::-webkit-details-marker{display:none}.lx-more-panel{position:absolute;right:0;top:100%;z-index:10;min-width:180px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:10px;padding:5px;box-shadow:0 6px 20px #0003}.lx-more-panel button{display:block;width:100%;text-align:left;white-space:nowrap}
-    .lx-calendar-wrap{position:relative;min-width:0}.lx-date-trigger{display:flex;align-items:center;gap:8px;text-align:left}.lx-date-arrow{margin-left:auto}.lx-calendar{width:100%;margin-top:8px;padding:8px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:12px}.lx-calendar[hidden],.lx-point-address[hidden]{display:none!important}.lx-cal-header{display:flex;align-items:center;justify-content:space-between;gap:4px}.lx-cal-header button{min-height:34px;padding:4px 10px}.lx-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center;align-items:center;margin:6px 0}.lx-cal-grid button{padding:0;height:34px;min-width:0;font-size:14px;border-radius:8px}.lx-cal-grid button[aria-pressed=true]{background:var(--lx-accent);color:white}.lx-cal-grid button:disabled{opacity:.3}.lx-cal-today:not([aria-pressed=true]){color:var(--lx-accent);font-weight:bold}.lx-point-number{display:grid;place-items:center;flex:none;min-width:26px;height:26px;padding:0 5px;border-radius:20px;background:var(--secondary-background-color,#303c4b);color:var(--secondary-text-color,#a6b4c5);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}.lx-point-row[aria-expanded=true] .lx-point-number{background:var(--lx-accent);color:white}.lx-point-label{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.5}.lx-point-row[aria-expanded=true] .lx-point-label{color:var(--lx-accent)}.lx-track-number{min-width:28px;width:auto;padding:0 5px;white-space:nowrap}.lx-track-selected{transform:scale(1.25);box-shadow:0 0 0 5px #4387e855,0 2px 6px #0005}.lx-point-address:not([hidden]){display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap}.lx-point-card{position:relative;border-radius:9px;padding:3px 0}.lx-point-card+.lx-point-card:before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:var(--lx-line);pointer-events:none}.lx-point-open{background:var(--secondary-background-color,#293441)}.lx-point-row{display:flex;width:100%;align-items:center;gap:8px;text-align:left;padding:10px 6px!important}.lx-point-row svg{flex:none;color:var(--secondary-text-color,#8997a9);width:18px;height:18px}.lx-point-row[aria-expanded=true] svg{color:var(--lx-accent)}.lx-point-row[aria-expanded=true] .lx-point-time,.lx-point-row[aria-expanded=true] .lx-point-arrow{color:var(--lx-accent)}.lx-point-row .lx-pin-filled{display:none}.lx-point-row[aria-expanded=true] .lx-pin-filled{display:block}.lx-point-row[aria-expanded=true] .lx-pin-outline{display:none}.lx-point-time{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap}.lx-point-arrow{color:var(--secondary-text-color,#a6afbd);font-size:16px}.lx-point-address{padding:0 10px 10px 32px;font-size:13px;color:var(--secondary-text-color,#a6afbd);overflow-wrap:anywhere}.lx-field{font:inherit;width:100%;padding:8px;border:1px solid var(--lx-line);border-radius:8px;background:var(--lx-card);color:inherit}.lx-sub{margin:8px 0 0}.lx-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-list-row:last-child{border:0}
+    .lx-calendar-wrap{position:relative;min-width:0}.lx-date-trigger{display:flex;align-items:center;gap:8px;text-align:left}.lx-date-arrow{margin-left:auto}.lx-calendar{width:100%;margin-top:8px;padding:8px;background:var(--lx-card);border:1px solid var(--lx-line);border-radius:12px}.lx-calendar[hidden],.lx-point-address[hidden]{display:none!important}.lx-cal-header{display:flex;align-items:center;justify-content:space-between;gap:4px}.lx-cal-header button{min-height:34px;padding:4px 10px}.lx-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center;align-items:center;margin:6px 0}.lx-cal-grid button{padding:0;height:34px;min-width:0;font-size:14px;border-radius:8px}.lx-cal-grid button[aria-pressed=true]{background:var(--lx-accent);color:white}.lx-cal-grid button:disabled{opacity:.3}.lx-cal-today:not([aria-pressed=true]){color:var(--lx-accent);font-weight:bold}.lx-group-address{display:block}.lx-group-count{display:block;margin-top:3px}.lx-group-detail:not([hidden]){display:flex;flex-direction:column;gap:4px;padding-left:8px}.lx-raw-point{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 4px!important}.lx-raw-point>span:last-child{margin-left:auto}.lx-raw-number{min-width:24px;text-align:center;font-size:12px;color:var(--secondary-text-color,#a6afbd)}.lx-raw-selected{color:var(--lx-accent);background:var(--secondary-background-color,#293441)}.lx-point-number{display:grid;place-items:center;flex:none;min-width:26px;height:26px;padding:0 5px;border-radius:20px;background:var(--secondary-background-color,#303c4b);color:var(--secondary-text-color,#a6b4c5);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}.lx-point-row[aria-expanded=true] .lx-point-number{background:var(--lx-accent);color:white}.lx-point-label{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.5}.lx-point-row[aria-expanded=true] .lx-point-label{color:var(--lx-accent)}.lx-track-number{min-width:28px;width:auto;padding:0 5px;white-space:nowrap}.lx-track-selected{transform:scale(1.25);box-shadow:0 0 0 5px #4387e855,0 2px 6px #0005}.lx-point-address:not([hidden]){display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap}.lx-point-card{position:relative;border-radius:9px;padding:3px 0}.lx-point-card+.lx-point-card:before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:var(--lx-line);pointer-events:none}.lx-point-open{background:var(--secondary-background-color,#293441)}.lx-point-row{display:flex;width:100%;align-items:center;gap:8px;text-align:left;padding:10px 6px!important}.lx-point-row svg{flex:none;color:var(--secondary-text-color,#8997a9);width:18px;height:18px}.lx-point-row[aria-expanded=true] svg{color:var(--lx-accent)}.lx-point-row[aria-expanded=true] .lx-point-time,.lx-point-row[aria-expanded=true] .lx-point-arrow{color:var(--lx-accent)}.lx-point-row .lx-pin-filled{display:none}.lx-point-row[aria-expanded=true] .lx-pin-filled{display:block}.lx-point-row[aria-expanded=true] .lx-pin-outline{display:none}.lx-point-time{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap}.lx-point-arrow{color:var(--secondary-text-color,#a6afbd);font-size:16px}.lx-point-address{padding:0 10px 10px 32px;font-size:13px;color:var(--secondary-text-color,#a6afbd);overflow-wrap:anywhere}.lx-field{font:inherit;width:100%;padding:8px;border:1px solid var(--lx-line);border-radius:8px;background:var(--lx-card);color:inherit}.lx-sub{margin:8px 0 0}.lx-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--lx-line)}.lx-list-row:last-child{border:0}
     @media(max-width:760px){.lx-menu{display:block}.lx-head h1{font-size:20px}.lx-tabs{order:5;justify-content:space-around;border-top:1px solid var(--lx-line);padding:5px 0 env(safe-area-inset-bottom,0px)}.lx-tabs button{flex:1;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px}.lx-tabs ha-icon{--mdc-icon-size:23px}.lx-grid{grid-template-columns:1fr}.lx-map-layout{display:flex;flex-direction:column;height:auto;min-height:0}.lx-map{order:-1;flex:none;height:48vh;height:48dvh;min-height:250px}.lx-side{overflow:visible}.lx-card{padding:11px}.lx-shell{padding-bottom:0}}
     </style><div class="lx-shell"><header class="lx-head"><button id="menu" class="lx-menu" aria-label="打开侧边栏"></button><h1>位置中心</h1></header><nav class="lx-tabs" aria-label="位置中心页面"></nav><div class="lx-error" role="status"></div><main class="lx-content"></main></div>`;
     this.querySelector('#menu').append(icon('mdi:menu'));this.querySelector('#menu').onclick=()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true}));
@@ -135,8 +135,8 @@ class LocationPanel extends HTMLElement{
   async resolveAddress(entity,recorded_at,target){
     try{
       const r=await this._hass.callWS({type:NS+'address',entity_id:entity,...(recorded_at===undefined?{}:{recorded_at})});
-      if(target.isConnected)target.textContent=r.address||'地址暂不可用';
-    }catch(e){if(target.isConnected)target.textContent='地址暂不可用';}
+      if(target.isConnected)target.textContent=r.address||'地址暂不可用';return r.address||null;
+    }catch(e){if(target.isConnected)target.textContent='地址暂不可用';return null;}
   }
   stopHistoryAddresses(){
     if(this.historyAddressObserver)this.historyAddressObserver.disconnect();
@@ -154,7 +154,7 @@ class LocationPanel extends HTMLElement{
     if(typeof IntersectionObserver==='function'){
       this.historyAddressObserver=new IntersectionObserver(entries=>{
         for(const entry of entries)if(entry.isIntersecting){
-          this.historyAddressObserver?.unobserve(entry.target);enqueue(entry.target);
+          if(generation===this.historyAddressGeneration){this.historyAddressObserver?.unobserve(entry.target);enqueue(entry.target);}
         }
       },{root:null,rootMargin:'60px 0px'});
     }
@@ -168,23 +168,50 @@ class LocationPanel extends HTMLElement{
         const item=this.historyAddressQueue.shift();
         if(item.generation!==this.historyAddressGeneration||item.seq!==this.historySeq||this.page!=='history'||!item.target.isConnected)continue;
         if(!this._hass?.user?.is_admin)break;
-        await this.resolveAddress(item.entity,item.at,item.target);
+        const address=await this.resolveAddress(item.entity,item.at,item.target);
+        if(item.generation===this.historyAddressGeneration&&item.seq===this.historySeq&&this.page==='history'&&item.target.isConnected&&address){
+          this.historyResolved.set(item.at,address);this.historyRegroup?.();
+        }
       }
     }finally{this.historyAddressBusy=false;}
+  }
+  historyLabel(indices){
+    const parts=[];let start=indices[0],end=start;
+    for(const i of indices.slice(1)){if(i===end+1)end=i;else{parts.push(start===end?String(start+1):(start+1)+'–'+(end+1));start=end=i;}}
+    if(start!==undefined)parts.push(start===end?String(start+1):(start+1)+'–'+(end+1));
+    return parts.join(', ');
+  }
+  historyDistance(a,b){
+    const rad=Math.PI/180,dlat=(b.latitude-a.latitude)*rad,dlon=(b.longitude-a.longitude)*rad;
+    const h=Math.sin(dlat/2)**2+Math.cos(a.latitude*rad)*Math.cos(b.latitude*rad)*Math.sin(dlon/2)**2;
+    return 12742000*Math.asin(Math.sqrt(Math.min(1,Math.max(0,h))));
+  }
+  historyGroups(points){
+    const groups=[];let group=null;
+    for(let i=0;i<points.length;i++){
+      const p=points[i],addr=this.historyResolved?.get(p.recorded_at);
+      const exact=(a,b)=>a.latitude===b.latitude&&a.longitude===b.longitude;
+      const canJoin=group&&group.every(j=>{
+        const q=points[j],other=this.historyResolved?.get(q.recorded_at);
+        return exact(p,q)||(addr&&other===addr&&this.historyDistance(p,q)<=30);
+      });
+      if(canJoin)group.push(i);else{group=[i];groups.push(group);}
+    }
+    return groups;
   }
   selectHistoryMarker(index){
     this.selectedHistoryIndex=index;
     for(const item of this.historyNumberMarkers||[]){
       const selected=index!==null&&item.indices.includes(index);
       item.dot.classList.toggle('lx-track-selected',selected);
-      item.dot.textContent=selected?String(index+1):item.label;
+      item.dot.textContent=item.label;
       item.marker.setzIndex?.(selected?200:120);
     }
   }
   async loadHistory(){
     const select=this.querySelector('.lx-side select'),day=this.querySelector('[data-history-date]'),timeline=this.querySelector('#history-timeline');
     if(!select||!day||!timeline)return;
-    this.stopHistoryAddresses();this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.openHistoryPoint=null;this.paintHistory();
+    this.stopHistoryAddresses();this.historyResolved=new Map();this.historyRegroup=null;this.selectedHistoryIndex=null;const seq=this.historySeq=(this.historySeq||0)+1;this.historyData=null;this.historyTimelineGroups=null;this.openHistoryPoint=null;this.paintHistory();
     timeline.replaceChildren(el('h2','定位时间轴'));
     if(!select.value||!day.value){timeline.append(el('p','请选择设备及日期','lx-muted'));return;}
     const start=new Date(day.value+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);
@@ -195,22 +222,52 @@ class LocationPanel extends HTMLElement{
       this.historyData=r.points;
       const title=el('div',undefined,'lx-title');title.append(el('h2','定位时间轴'),el('span',r.points.length+' 个定位点'+(r.truncated?' · 已截断':''),'lx-muted'));timeline.replaceChildren(title);
       if(!r.points.length)timeline.append(el('p','当日暂无定位记录','lx-muted'));
-      let shown=0,expanded=null;const entity=select.value,watchAddress=this.watchHistoryAddresses(entity,seq);
+      let shown=0,expanded=null,groups=this.historyGroups(r.points),limit=50,rendering=false;
+      const entity=select.value,watchAddress=this.watchHistoryAddresses(entity,seq);
+      const body=el('div');timeline.append(body);
       const timeOnly=t=>new Date(t).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
       const close=(restore=false)=>{if(!expanded)return;expanded.row.setAttribute('aria-expanded','false');expanded.card.classList.remove('lx-point-open');expanded.arrow.textContent='⌄';this.animatePoint(expanded.detail,false);expanded=null;if(restore){this.selectHistoryMarker(null);this.fitHistory();}};
-      const more=button('显示更多',()=>append());
-      const append=()=>{more.remove();for(const [offset,p] of r.points.slice(shown,shown+50).entries()){
-        const index=shown+offset,card=el('div',undefined,'lx-point-card'),detail=el('div',undefined,'lx-point-address'),arrow=el('span','⌄','lx-point-arrow');
-        detail.hidden=true;detail.append(el('span','时间 '+timeOnly(p.recorded_at)),el('span',p.accuracy==null?'精度未知':'精度 '+Math.round(p.accuracy)+' m'));
-        const row=button('',()=>open(false),'lx-point-row'),number=el('span',String(index+1),'lx-point-number'),address=el('span','地址待加载','lx-point-label');
-        address._lxRecordedAt=p.recorded_at;
-        row.dataset.recordedAt=String(p.recorded_at);row.setAttribute('aria-expanded','false');
-        row.append(number,address,arrow);
-        const open=force=>{if(expanded?.row===row){if(!force)close(true);return;}close(false);expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';this.animatePoint(detail,true);this.selectHistoryMarker(index);if(this.map)this.map.setZoomAndCenter(17,this.gcj(p.longitude,p.latitude));};
-        row.openPoint=()=>open(true);card.append(row,detail);timeline.append(card);watchAddress(address);
-      }shown=Math.min(shown+50,r.points.length);if(shown<r.points.length)timeline.append(more);};
-      append();
-      this.openHistoryPoint=i=>{if(seq!==this.historySeq||!timeline.isConnected)return;while(shown<=i&&shown<r.points.length)append();const row=timeline.querySelector('[data-recorded-at="'+r.points[i].recorded_at+'"]');if(row){row.openPoint();row.scrollIntoView({block:'nearest'});}};
+      const more=button('显示更多',()=>{limit+=50;render();});
+      const render=()=>{
+        if(rendering||seq!==this.historySeq||!body.isConnected)return;
+        rendering=true;
+        const active=this.selectedHistoryIndex,scroll=this.querySelector('.lx-side')?.scrollTop;
+        // Cancel obsolete visible-row observations; pending requests for removed DOM nodes are discarded.
+        this.historyAddressObserver?.disconnect();
+        expanded=null;body.replaceChildren();shown=0;
+        for(const indices of groups.slice(0,limit)){
+          const i=indices[0],p=r.points[i],card=el('div',undefined,'lx-point-card'),detail=el('div',undefined,'lx-point-address lx-group-detail'),arrow=el('span','⌄','lx-point-arrow');
+          detail.hidden=true;
+          const row=button('',()=>open(i,false),'lx-point-row'),number=el('span',this.historyLabel(indices),'lx-point-number'),info=el('span',undefined,'lx-point-label');
+          const address=el('span',this.historyResolved.get(p.recorded_at)||'地址待加载','lx-group-address');address._lxRecordedAt=p.recorded_at;info.append(address);
+          if(indices.length>1)info.append(el('span',indices.length+' 次定位记录','lx-muted lx-group-count'));
+          row.dataset.groupStart=String(i);row.setAttribute('aria-expanded','false');row.append(number,info,arrow);
+          const focus=j=>{this.selectHistoryMarker(j);if(this.map)this.map.setZoomAndCenter(17,this.gcj(r.points[j].longitude,r.points[j].latitude));for(const child of detail.children)child.classList.toggle('lx-raw-selected',Number(child.dataset.index)===j);};
+          const open=(j,force)=>{if(expanded?.row===row){if(!force){close(true);return;}focus(j);return;}close(false);expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';this.animatePoint(detail,true);focus(j);};
+          for(const j of indices){const raw=r.points[j],child=button('',()=>focus(j),'lx-raw-point');child.dataset.index=String(j);child.append(el('span',String(j+1),'lx-raw-number'),el('span',timeOnly(raw.recorded_at)),el('span',raw.accuracy==null?'精度未知':Math.round(raw.accuracy)+' m','lx-muted'));detail.append(child);}
+          row.openPoint=j=>open(j,true);card.append(row,detail);body.append(card);
+          if(!this.historyResolved.has(p.recorded_at))watchAddress(address);
+          // Exact coordinate groups reuse the representative address; distinct nearby points must resolve individually before merging.
+          if(active!=null&&indices.includes(active)){expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';detail.hidden=false;for(const child of detail.children)child.classList.toggle('lx-raw-selected',Number(child.dataset.index)===active);}
+          shown++;
+        }
+        if(shown<groups.length)body.append(more);
+        if(scroll!=null&&this.querySelector('.lx-side'))this.querySelector('.lx-side').scrollTop=scroll;
+        rendering=false;
+      };
+      this.historyRegroup=()=>{
+        if(seq!==this.historySeq||!body.isConnected)return;
+        // Propagate addresses only for exactly equal coordinates.
+        const known=new Map();for(const p of r.points){const addr=this.historyResolved.get(p.recorded_at);if(addr)known.set(p.latitude+','+p.longitude,addr);}
+        for(const p of r.points){const addr=known.get(p.latitude+','+p.longitude);if(addr)this.historyResolved.set(p.recorded_at,addr);}
+        const next=this.historyGroups(r.points);
+        if(JSON.stringify(next)===JSON.stringify(groups))return;
+        groups=next;this.historyTimelineGroups=groups;
+        const active=this.selectedHistoryIndex;if(active!=null){const g=groups.findIndex(v=>v.includes(active));if(g>=limit)limit=g+1;}
+        render();this.paintHistory(false);
+      };
+      this.historyTimelineGroups=groups;render();
+      this.openHistoryPoint=i=>{if(seq!==this.historySeq||!body.isConnected)return;const g=groups.findIndex(v=>v.includes(i));if(g<0)return;if(g>=limit){limit=Math.ceil((g+1)/50)*50;render();}const row=body.querySelector('[data-group-start="'+groups[g][0]+'"]');if(row){row.openPoint(i);row.scrollIntoView({block:'nearest'});}};
       this.paintHistory();
     }catch(e){if(seq===this.historySeq&&timeline.isConnected)timeline.replaceChildren(el('h2','定位时间轴'),el('p','查询失败：'+String(e.message||e),'lx-muted'));}
   }
@@ -230,7 +287,7 @@ class LocationPanel extends HTMLElement{
     if(this.historyData.every(p=>Math.abs(p.longitude-first.longitude)<0.000001&&Math.abs(p.latitude-first.latitude)<0.000001))this.map.setZoomAndCenter(16,xy);
     else this.map.setFitView(this.historyOverlays,false,[45,45,45,45],16);
   }
-  paintHistory(){
+  paintHistory(adjustView=true){
     if(!this.map||this.page!=='history')return;
     if(this.historyOverlays?.length)this.map.remove(this.historyOverlays);
     this.historyOverlays=[];this.historyNumberMarkers=[];const points=this.historyData||[];if(!points.length)return;
@@ -243,21 +300,21 @@ class LocationPanel extends HTMLElement{
       dashed=gap;run.push(xy[i]);
     }flush();
     const groups=new Map();
-    for(let i=0;i<xy.length;i++){
-      const key=xy[i].map(v=>v.toFixed(6)).join(',');
-      if(!groups.has(key))groups.set(key,[]);groups.get(key).push(i);
+    for(const indices of this.historyTimelineGroups||this.historyGroups(points)){
+      const i=indices[0],key=points[i].latitude+','+points[i].longitude;
+      if(!groups.has(key))groups.set(key,[]);groups.get(key).push(...indices);
     }
     const focus=i=>{if(this.map&&this.page==='history')this.openHistoryPoint?.(i);};
     for(const indices of groups.values()){
       const i=indices[0],isFirst=indices.includes(0),isLast=indices.includes(points.length-1);
-      const label=indices.length===1?String(i+1):String(i+1)+'+'+(indices.length-1);
+      const label=this.historyLabel(indices);
       const dot=el('div',label,'lx-track-end lx-track-number');
       dot.style.background=isFirst&&isLast?'#64748b':isFirst?'#059669':isLast?'#dc5252':'#4387e8';
       const marker=new A.Marker({position:xy[i],content:dot,anchor:'center',title:'定位点 '+indices.map(n=>n+1).join('、'),zIndex:120});
       marker.on('click',()=>{const selected=this.selectedHistoryIndex,pos=indices.indexOf(selected);focus(indices[(pos+1)%indices.length]);});
       this.historyNumberMarkers.push({marker,dot,indices,label});this.historyOverlays.push(marker);
     }
-    this.map.add(this.historyOverlays);this.selectHistoryMarker(this.selectedHistoryIndex??null);if(this.selectedHistoryIndex==null)this.fitHistory();else this.map.setZoomAndCenter(17,xy[this.selectedHistoryIndex]);
+    this.map.add(this.historyOverlays);this.selectHistoryMarker(this.selectedHistoryIndex??null);if(adjustView){if(this.selectedHistoryIndex==null)this.fitHistory();else this.map.setZoomAndCenter(17,xy[this.selectedHistoryIndex]);}
   }
   color(id){let n=0;for(const c of id)n=(n*31+c.charCodeAt(0))>>>0;return ['#3b82f6','#0ca87d','#a855f7','#e58b25','#e05e86'][n%5];}
   // Local coordinate conversion avoids sending precise positions to the conversion service.
