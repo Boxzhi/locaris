@@ -1,0 +1,37 @@
+name: Publish Locaris v0.2.3-preview
+on:
+  push:
+    branches: ['release/v0.2.3-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.3-preview >/dev/null 2>&1; then
+            echo "Release already exists; no changes made."
+            exit 0
+          fi
+          cat > /tmp/locaris-release-notes.md <<'EOF'
+          首个独立安装验收版本。
+
+          ## 功能
+          - 实时位置、历史轨迹与 GPS 设备管理
+          - 高德地图、地址解析及可配置运行策略
+          - 独立 SQLite 数据存储，历史保留 30 天
+          - 卸载时可选自动清理本地数据，默认保留
+          - 全新 Locaris 品牌标识
+
+          ## 安装
+          在 HACS 添加自定义仓库 https://github.com/Boxzhi/locaris，类型选择 Integration。
+
+          ## 验收状态
+          CI 检查已通过。真实 HA/HACS 安装、卸载及多终端回归尚待验收。本版本为预览版。
+          EOF
+          gh release create v0.2.3-preview --target 4f68604f98010b6d6a84c3ea5c23c176b3645361 --title "Locaris v0.2.3-preview" --notes-file /tmp/locaris-release-notes.md --prerelease --latest=false
