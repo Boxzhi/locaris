@@ -18,6 +18,7 @@ from homeassistant.components.http import StaticPathConfig
 from .location_store import Store, position
 from .history_logic import collapse_history
 from . import security
+from .runtime_policy import validate_patch
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "luxe_location_probe"
 PANEL = "luxe-location-probe"
@@ -73,7 +74,7 @@ async def ws_config(hass, connection, msg):
     token = secrets.token_urlsafe(32)
     sessions[token] = {"expires":now+MAP_SESSION_TTL_S,"times":[],"user":connection.user.id}
     connection.send_result(msg["id"], {"map_key":data["map_key"],"proxy_path":"/api/luxe_location/"+token+"/_AMapService"})
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove"]), vol.Optional("entity_id"): checked(security.entity_id), vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool, vol.Optional("include_storage", default=True): bool})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove","policy"]), vol.Optional("entity_id"): checked(security.entity_id), vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool, vol.Optional("include_storage", default=True): bool, vol.Optional("policy"): checked(validate_patch)})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_storage(hass, connection, msg):
@@ -86,10 +87,15 @@ async def ws_storage(hass, connection, msg):
         return
     try:
         action = msg["action"]
-        if action != "list" and not msg.get("entity_id"):
-            raise ValueError("Device required")
-        # Discovery is already scheduled every minute by Store.
-        if action != "list":
+        if action == "policy":
+            if "policy" not in msg or "entity_id" in msg:
+                raise ValueError("Invalid policy request")
+            await store.update_policy(msg["policy"], lambda: current_admin(hass, connection))
+        elif "policy" in msg:
+            raise ValueError("Unexpected policy")
+        elif action != "list":
+            if not msg.get("entity_id"):
+                raise ValueError("Device required")
             await store.discover()
         if not await current_admin(hass, connection) or not store.active or not store.ready:
             connection.send_error(msg["id"], "not_loaded", "Storage not ready")
@@ -125,9 +131,11 @@ async def ws_storage(hass, connection, msg):
                 item["position"] = {"latitude":pos[0],"longitude":pos[1],"accuracy":pos[2],
                     "updated_at":int(state.last_updated.timestamp()*1000)}
             devices.append(item)
-        connection.send_result(msg["id"], {"candidates":devices, **({"storage":stats} if stats is not None else {})})
+        connection.send_result(msg["id"], {"candidates":devices, "policy":dict(store.policy), **({"storage":stats} if stats is not None else {})})
+    except PermissionError:
+        connection.send_error(msg["id"], "unauthorized", "Administrator required")
     except ValueError:
-        connection.send_error(msg["id"], "invalid_device", "Invalid GPS device")
+        connection.send_error(msg["id"], "invalid_request", "Invalid device or runtime policy")
     except Exception:
         store.warn("Location storage operation failed (no coordinates logged)")
         connection.send_error(msg["id"], "storage_failed", "Storage operation failed")
@@ -425,7 +433,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.48-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.49-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)

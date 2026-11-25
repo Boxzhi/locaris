@@ -3,16 +3,20 @@ import asyncio
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import logging
+import json
 import math
 from pathlib import Path
 import sqlite3
 import time
 
 from .history_logic import recorder_changes
-from .const import (WINDOW, HISTORY_RETENTION_DAYS, DAY_MS, DISCOVERY_INTERVAL_S,
-    BACKFILL_INTERVAL_S, BACKFILL_RETRY_S, BACKFILL_OVERLAP_MS, RECORDER_MIN_DELAY_MS,
+from .const import (WINDOW, HISTORY_RETENTION_DAYS, DAY_MS,
+    BACKFILL_RETRY_S, BACKFILL_OVERLAP_MS, RECORDER_MIN_DELAY_MS,
     RECORDER_DEFAULT_COMMIT_S, RECORDER_COMMIT_BUFFER_MS, RECORDER_BOUNDARY_MS,
-    WARNING_INTERVAL_S, SQLITE_START_TIMEOUT_S, SQLITE_BUSY_TIMEOUT_S, SQLITE_RETRY_DELAY_S)
+    WARNING_INTERVAL_S, SQLITE_START_TIMEOUT_S, SQLITE_BUSY_TIMEOUT_S, SQLITE_RETRY_DELAY_S,
+    SCHEDULER_TICK_S, DISCOVERY_QUEUE_LIMIT)
+from .runtime_policy import DEFAULT_POLICY, POLICY_KEY, validate_patch, Schedule
+from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
@@ -50,15 +54,19 @@ class Store:
         self.devices = set()
         self.managed = set()
         self.excluded = set()
-        self.discovery = None
+        self.discovery_listener = None
+        self.discovery_pending = set()
+        self.discovery_task = None
+        self.discovery_full_task = None
+        self.cleanup_task = None
+        self.policy = dict(DEFAULT_POLICY)
+        self.schedule = None
         self.importing = {}
         self.retry_import = {}
         self.recovery_from = {}
         self.backfill_active = set()
         self.backfill_pending = {}
         self.pending_writes = 0
-        self.scanning = False
-        self.periodic_running = False
         self.warning_times = {}
         self.generations = {}
         self.last_valid = {}
@@ -138,15 +146,41 @@ class Store:
         self.managed = {e for e, excluded in management if not excluded}
         self.excluded = {e for e, excluded in management if excluded}
         self.devices = set(recording) & self.managed
+        await self.load_policy()
         await self.migrate_discovery()
         await self.discover()
         await self.cleanup()
         self.ready = True
         self.listen()
-        self.timer = async_track_time_interval(self.hass, self.periodic, timedelta(seconds=BACKFILL_INTERVAL_S))
-        self.discovery = async_track_time_interval(self.hass, self.scan_tick, timedelta(seconds=DISCOVERY_INTERVAL_S))
+        self.schedule = Schedule(self.policy, time.monotonic())
+        self.discovery_listener = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self.discovery_changed)
+        self.timer = async_track_time_interval(self.hass, self.scan_tick, timedelta(seconds=SCHEDULER_TICK_S))
         for entity in sorted(self.devices):
             self.schedule_backfill(entity)
+
+    async def load_policy(self):
+        row = await self.run(lambda c: c.execute("SELECT value FROM probe_metadata WHERE key=?", (POLICY_KEY,)).fetchone())
+        if row:
+            try:
+                self.policy = {**DEFAULT_POLICY, **validate_patch(json.loads(row[0]))}
+            except (ValueError, TypeError):
+                self.warn("Invalid saved location runtime policy; defaults used")
+
+    async def update_policy(self, patch, authorize):
+        patch = validate_patch(patch)
+        async with self.lock:
+            if not self.active or not self.ready or not await authorize() or not self.active or not self.ready:
+                raise PermissionError("Location policy unavailable")
+            old = self.policy
+            new = {**old, **patch}
+            if new == old:
+                return
+            await self.run(lambda c: c.execute(
+                "INSERT INTO probe_metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (POLICY_KEY, json.dumps(new, sort_keys=True))))
+            self.policy = new
+            if self.active and self.schedule:
+                self.schedule.update(old, new, time.monotonic())
 
     async def migrate_discovery(self):
         # v0.0.5 automatically admitted GPS entities without coordinates.
@@ -171,9 +205,10 @@ class Store:
             removed = await self.run(migrate)
             self.managed.difference_update(removed)
 
-    async def discover(self):
-        candidates = {s.entity_id for s in self.hass.states.async_all("device_tracker")
-                      if position(s) is not None}
+    async def discover(self, candidates=None):
+        if candidates is None:
+            candidates = {s.entity_id for s in self.hass.states.async_all("device_tracker")
+                          if position(s) is not None}
         async with self.lock:
             if not self.active:
                 return
@@ -189,21 +224,74 @@ class Store:
             self.warning_times[message] = now
             _LOGGER.warning(message)
 
-    async def scan_tick(self, _now):
-        if self.scanning or not self.active:
+    @callback
+    def discovery_changed(self, event):
+        if not self.active or not self.ready:
             return
-        self.scanning = True
+        entity = event.data.get("entity_id", "")
+        if not entity.startswith("device_tracker.") or entity in self.managed or entity in self.excluded:
+            return
+        if position(event.data.get("new_state")) is None:
+            return
+        if len(self.discovery_pending) < DISCOVERY_QUEUE_LIMIT:
+            self.discovery_pending.add(entity)
+        self.start_discovery_batch()
+
+    @callback
+    def start_discovery_batch(self):
+        if not self.active or not self.ready or not self.discovery_pending or self.discovery_task:
+            return
+        task = self.spawn(self.discover_pending())
+        if task:
+            self.discovery_task = task
+            task.add_done_callback(self.discovery_finished)
+
+    @callback
+    def discovery_finished(self, task):
+        if self.discovery_task is task:
+            self.discovery_task = None
+            self.start_discovery_batch()
+
+    async def discover_pending(self):
+        # One bounded batch; state is revalidated under the database lock.
+        pending = set(self.discovery_pending)
+        self.discovery_pending.difference_update(pending)
         try:
-            try:
-                await self.discover()
-            except (sqlite3.Error, OSError):
-                self.warn("Location discovery deferred (no coordinates logged)")
-            if self.active and self.ready:
-                for entity, deadline in list(self.retry_import.items()):
-                    if time.monotonic() >= deadline:
-                        self.schedule_backfill(entity)
-        finally:
-            self.scanning = False
+            await self.discover(pending)
+        except (sqlite3.Error, OSError):
+            self.warn("Location event discovery deferred (no coordinates logged)")
+
+    async def discover_periodic(self):
+        try:
+            await self.discover()
+        except (sqlite3.Error, OSError):
+            self.warn("Location discovery deferred (no coordinates logged)")
+
+    async def cleanup_periodic(self):
+        try:
+            await self.cleanup()
+        except (sqlite3.Error, OSError):
+            self.warn("Location periodic cleanup failed (no coordinates logged)")
+
+    @callback
+    def scan_tick(self, _now):
+        if not self.active or not self.ready or not self.schedule:
+            return
+        now = time.monotonic()
+        # Retry deadlines are independent of discovery, cleanup and normal backfill.
+        for entity, deadline in list(self.retry_import.items()):
+            if now >= deadline:
+                self.schedule_backfill(entity)
+        discovery, backfill, cleanup = self.schedule.due(self.policy, now)
+        if discovery and (self.discovery_full_task is None or self.discovery_full_task.done()):
+            self.discovery_full_task = self.spawn(self.discover_periodic())
+        if backfill:
+            for entity in sorted(self.devices):
+                if self.retry_import.get(entity, 0) <= now:
+                    self.schedule_backfill(entity)
+        if cleanup and (self.cleanup_task is None or self.cleanup_task.done()):
+            self.cleanup_task = self.spawn(self.cleanup_periodic())
+        self.start_discovery_batch()
 
     async def add(self, entity):
         state = self.hass.states.get(entity)
@@ -536,23 +624,6 @@ class Store:
             await self.hass.async_add_executor_job(self.checkpoint_if_needed)
             self.last_cleanup = now_ms()
 
-    async def periodic(self, _now):
-        if not self.active or self.periodic_running:
-            return
-        self.periodic_running = True
-        try:
-            try:
-                await self.cleanup()
-            except (sqlite3.Error, OSError):
-                self.warn("Location periodic cleanup failed (no coordinates logged)")
-            if not self.active:
-                return
-            for entity in sorted(self.devices):
-                if self.retry_import.get(entity, 0) <= time.monotonic():
-                    self.schedule_backfill(entity)
-        finally:
-            self.periodic_running = False
-
     @staticmethod
     def cached_address(con, entity, lon, lat):
         # Use a bounding box for the index lookup, then an actual distance test.
@@ -604,7 +675,7 @@ class Store:
         async with self.stop_lock:
             self.active = False
             self.ready = False
-            for name in ("unsub", "timer", "discovery"):
+            for name in ("unsub", "timer", "discovery_listener"):
                 unsubscribe = getattr(self, name)
                 setattr(self, name, None)
                 if unsubscribe:
@@ -618,6 +689,9 @@ class Store:
                 if self.initialized:
                     await self.checkpoint_safely()
                     self.initialized = False
+            self.discovery_pending.clear()
+            self.discovery_task = self.discovery_full_task = self.cleanup_task = None
+            self.schedule = None
             self.importing.clear()
             self.retry_import.clear()
             self.recovery_from.clear()
