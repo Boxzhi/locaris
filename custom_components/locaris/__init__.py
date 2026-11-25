@@ -19,6 +19,7 @@ from .location_store import Store, position
 from .history_logic import collapse_history
 from . import security
 from .runtime_policy import validate_patch
+from .data_cleanup import DELETE_ON_REMOVE, delete_on_remove, async_cleanup_entry
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "locaris"
 PANEL = "locaris"
@@ -75,7 +76,7 @@ async def ws_config(hass, connection, msg):
     token = secrets.token_urlsafe(32)
     sessions[token] = {"expires":now+MAP_SESSION_TTL_S,"times":[],"user":connection.user.id}
     connection.send_result(msg["id"], {"map_key":data["map_key"],"proxy_path":"/api/locaris/"+token+"/_AMapService"})
-@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove","policy"]), vol.Optional("entity_id"): checked(security.entity_id), vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool, vol.Optional("include_storage", default=True): bool, vol.Optional("policy"): checked(validate_patch)})
+@websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove","policy","uninstall_policy"]), vol.Optional("entity_id"): checked(security.entity_id), vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool, vol.Optional("include_storage", default=True): bool, vol.Optional("policy"): checked(validate_patch), vol.Optional("delete_on_remove"): bool})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_storage(hass, connection, msg):
@@ -88,7 +89,21 @@ async def ws_storage(hass, connection, msg):
         return
     try:
         action = msg["action"]
-        if action == "policy":
+        state = hass.data.get(DOMAIN, {})
+        entry = hass.config_entries.async_get_entry(state.get("entry_id", ""))
+        if not entry or entry.domain != DOMAIN:
+            connection.send_error(msg["id"], "not_loaded", "Locaris not loaded")
+            return
+        if "delete_on_remove" in msg and action != "uninstall_policy":
+            raise ValueError("Unexpected uninstall policy")
+        if action == "uninstall_policy":
+            if "delete_on_remove" not in msg or "entity_id" in msg or "policy" in msg:
+                raise ValueError("Invalid uninstall policy")
+            if not await current_admin(hass, connection) or not store.active or not store.ready or state.get("store") is not store:
+                connection.send_error(msg["id"], "not_loaded", "Storage not ready")
+                return
+            hass.config_entries.async_update_entry(entry, options={**entry.options, DELETE_ON_REMOVE: msg["delete_on_remove"]})
+        elif action == "policy":
             if "policy" not in msg or "entity_id" in msg:
                 raise ValueError("Invalid policy request")
             await store.update_policy(msg["policy"], lambda: current_admin(hass, connection))
@@ -132,11 +147,13 @@ async def ws_storage(hass, connection, msg):
                 item["position"] = {"latitude":pos[0],"longitude":pos[1],"accuracy":pos[2],
                     "updated_at":int(state.last_updated.timestamp()*1000)}
             devices.append(item)
-        connection.send_result(msg["id"], {"candidates":devices, "policy":dict(store.policy), **({"storage":stats} if stats is not None else {})})
+        connection.send_result(msg["id"], {"candidates":devices, "policy":dict(store.policy), "delete_on_remove":delete_on_remove(entry), **({"storage":stats} if stats is not None else {})})
     except PermissionError:
         connection.send_error(msg["id"], "unauthorized", "Administrator required")
     except ValueError:
-        if msg["action"] == "policy" or "policy" in msg:
+        if msg["action"] == "uninstall_policy" or "delete_on_remove" in msg:
+            connection.send_error(msg["id"], "invalid_request", "Invalid uninstall policy")
+        elif msg["action"] == "policy" or "policy" in msg:
             connection.send_error(msg["id"], "invalid_request", "Invalid runtime policy")
         else:
             connection.send_error(msg["id"], "invalid_device", "Invalid GPS device")
@@ -432,15 +449,16 @@ async def async_setup_entry(hass, entry):
     try:
         await store.start()
         state["store"] = store
+        state["entry_id"] = entry.entry_id
         state["active"] = dict(entry.data)
         state["proxy_sessions"] = {}
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.2-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.3-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
-        state.pop("store", None)
+        state.pop("entry_id", None)
         state.pop("proxy_sessions", None)
         state.pop("proxy_runtime", None)
         state.pop("address_cache", None)
@@ -452,7 +470,10 @@ async def async_setup_entry(hass, entry):
         try:
             await store.stop()
         except Exception:
+            state["store"] = store
             _LOGGER.warning("Location setup rollback failed")
+        else:
+            state.pop("store", None)
         raise
     return True
 async def async_unload_entry(hass, entry):
@@ -465,11 +486,16 @@ async def async_unload_entry(hass, entry):
     except Exception:
         _LOGGER.warning("Location panel removal failed")
     hass.data[DOMAIN].pop("active",None)
+    hass.data[DOMAIN].pop("entry_id",None)
     hass.data[DOMAIN].pop("proxy_sessions",None)
     hass.data[DOMAIN].pop("proxy_runtime",None)
     hass.data[DOMAIN].pop("address_cache",None)
     hass.data[DOMAIN].pop("address_runtime",None)
-    store = hass.data[DOMAIN].pop("store",None)
     if store:
         await store.stop()
+        hass.data[DOMAIN].pop("store", None)
     return True
+
+async def async_remove_entry(hass, entry):
+    """Delete Locaris data only on permanent config entry removal."""
+    await async_cleanup_entry(hass, entry)

@@ -1,4 +1,4 @@
-const VERSION='0.2.2-preview';
+const VERSION='0.2.3-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
@@ -256,16 +256,16 @@ class LocationPanel extends HTMLElement{
   status(s='',retry){const n=this.querySelector('.lx-error');if(!n)return;n.replaceChildren();n.hidden=!s;if(s){n.append(el('span',s));if(retry)n.append(button('重试',retry));}}
   stateView(message,retry){const node=el('div',undefined,'lx-state lx-muted');node.setAttribute('role','status');node.append(el('span',message));if(retry)node.append(button('重试',retry));return node;}
   mapStatus(target,message='',retry,retryLabel='重试'){const node=target.parentElement?.querySelector('.lx-map-state');if(!node)return;node.replaceChildren();node.hidden=!message;if(message){node.append(el('span',message));if(retry)node.append(button(retryLabel,retry));}}
-  refresh(action='list',entity_id,delete_history=false,policy){
+  refresh(action='list',entity_id,delete_history=false,policy,delete_on_remove){
     if(!this.isConnected||!this._hass?.user?.is_admin||this._hass.connected===false)return;
     if(action==='list'){
       if(this.refreshToken)return;
       this.refreshNeeded=true;
     }else{
-      const key=JSON.stringify([action,entity_id,delete_history,policy]);
+      const key=JSON.stringify([action,entity_id,delete_history,policy,delete_on_remove]);
       const last=this.pendingActions[this.pendingActions.length-1];if(last?.key===key||(!last&&this.refreshToken?.key===key))return;
       if(this.pendingActions.length>=32){this.status('待处理操作过多，请稍后重试');return;}
-      this.pendingActions.push({action,entity_id,delete_history,policy,key});
+      this.pendingActions.push({action,entity_id,delete_history,policy,delete_on_remove,key});
     }
     this.drainRefresh();
   }
@@ -279,7 +279,7 @@ class LocationPanel extends HTMLElement{
     const current=()=>this.isConnected&&this.epoch===epoch&&this.refreshToken===token;
     const active=()=>current()&&this._hass?.user?.is_admin&&this._hass.connected!==false;
     try{
-      const r=await this._hass.callWS({type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live,include_storage:settings,...(job.policy?{policy:job.policy}:{})});
+      const r=await this._hass.callWS({type:NS+'storage',action:job.action,...(job.entity_id?{entity_id:job.entity_id}:{}),import_history:true,delete_history:!!job.delete_history,include_position:live,include_storage:settings,...(job.policy?{policy:job.policy}:{}),...(typeof job.delete_on_remove==='boolean'?{delete_on_remove:job.delete_on_remove}:{})});
       if(!active())return;
       if(live!==(this.page==='live')||settings!==(this.page==='settings')){this.refreshNeeded=true;return;}
       const oldGap=this.policyValue('track_gap_minutes');this.data=r;this.dataError='';if(this.page==='history'&&oldGap!==this.policyValue('track_gap_minutes')){const legend=this.querySelector('[data-history-legend]');if(legend)legend.title=this.historyLegend();this.historyTrackData=null;this.paintHistory(false);}this.pruneLiveAddresses();this.status();const signature=JSON.stringify([this.page,r,this.page==='live'?new Date().toDateString():null]);if(signature!==this.renderSignature){this.updateData();this.renderSignature=signature;}else if(live)this.retryLiveAddresses();
@@ -938,6 +938,13 @@ class LocationPanel extends HTMLElement{
       const d=data.storage,card=el('section',undefined,'lx-card');card.append(el('h2','数据存储'));
       if(!d)card.append(el('p','正在读取存储信息…','lx-muted'));else for(const [name,value] of [['历史保留',String(d.retention_days)+' 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.location_count)],['最近清理',fmt(d.last_cleanup)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
       stack.append(this.drawRuntimePolicy(),card);
+      const management=el('section',undefined,'lx-card');management.append(el('h2','数据管理'));
+      const removalRow=el('div',undefined,'lx-row'),removalInfo=el('div',undefined,'lx-name'),removalLabel=el('label',undefined,'lx-switch'),removalToggle=el('input');
+      const enabled=data.delete_on_remove===true;
+      removalInfo.append(el('strong','删除集成时清除本地数据'),el('div','删除 Locaris 时清除历史定位、地址缓存、设备管理状态及运行策略。删除后不可恢复，不影响 HA Recorder。','lx-muted'));
+      removalToggle.type='checkbox';removalToggle.checked=enabled;removalToggle.setAttribute('aria-label','删除集成时清除本地数据');removalToggle.dataset.controlKey='delete-on-remove';
+      removalToggle.onchange=()=>{const checked=removalToggle.checked;removalToggle.checked=enabled;if(checked&&!confirm('开启后，删除 Locaris 集成配置项将永久清除本地数据。确定开启？'))return;this.refresh('uninstall_policy',undefined,false,undefined,checked);};
+      removalLabel.append(removalToggle);removalRow.append(removalInfo,removalLabel);management.append(removalRow);stack.append(management);
 
       const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.dataset.controlKey='show-header';uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('locaris.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow);stack.prepend(ui);
       const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','Locaris · '+VERSION));stack.append(about);
