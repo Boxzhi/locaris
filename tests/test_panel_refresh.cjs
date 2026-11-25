@@ -39,7 +39,7 @@ test('history timeline uses compact vertical spacing; mobile selected icons have
 });
 test('removed devices section appears only for nonzero count and preserves open state',()=>{
   class Node {
-    constructor(tag,text,cls){this.tag=tag;this.text=text;this.cls=cls;this.children=[];this.dataset={};this.open=false;this.scrollTop=0;this.classList={add(){}};}
+    constructor(tag,text,cls){this.tag=tag;this.text=text;this.cls=cls;this.children=[];this.dataset={};this.style={};this.open=false;this.scrollTop=0;this.classList={add(){}};}
     append(...nodes){this.children.push(...nodes);}
     replaceChildren(){this.children=[];}
     setAttribute(){}
