@@ -6,7 +6,7 @@ import types
 import unittest
 
 package = types.ModuleType("luxe_policy_test")
-package.__path__ = [str(Path(__file__).resolve().parents[1] / "custom_components/luxe_location_probe")]
+package.__path__ = [str(Path(__file__).resolve().parents[1] / "custom_components/locaris")]
 sys.modules[package.__name__] = package
 policy = importlib.import_module(package.__name__ + ".runtime_policy")
 const = importlib.import_module(package.__name__ + ".const")

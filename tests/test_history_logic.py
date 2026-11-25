@@ -3,7 +3,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 
-spec = importlib.util.spec_from_file_location("history_logic", Path(__file__).resolve().parents[1] / "custom_components/luxe_location_probe/history_logic.py")
+spec = importlib.util.spec_from_file_location("history_logic", Path(__file__).resolve().parents[1] / "custom_components/locaris/history_logic.py")
 logic = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(logic)
 

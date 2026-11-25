@@ -7,7 +7,7 @@ import sys
 import types
 
 package = types.ModuleType("luxe_security_test")
-package.__path__ = [str(Path(__file__).resolve().parents[1] / "custom_components/luxe_location_probe")]
+package.__path__ = [str(Path(__file__).resolve().parents[1] / "custom_components/locaris")]
 sys.modules[package.__name__] = package
 spec = importlib.util.spec_from_file_location("luxe_security_test.security", Path(package.__path__[0]) / "security.py")
 security = importlib.util.module_from_spec(spec)
@@ -27,9 +27,9 @@ class SecurityTest(unittest.TestCase):
         for value in (True, float("nan"), float("inf"), -91, "12"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 security.coordinate(value, 90)
-        path = "/api/luxe_location/"+"a"*43+"/_AMapService"
+        path = "/api/locaris/"+"a"*43+"/_AMapService"
         self.assertEqual(security.session_path(path), path)
-        for value in (path+"?x=1", path+"/", "/api/luxe_location/../_AMapService"):
+        for value in (path+"?x=1", path+"/", "/api/locaris/../_AMapService"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 security.session_path(value)
 

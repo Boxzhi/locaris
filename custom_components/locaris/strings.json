@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "LUXE Location",
+        "title": "Locaris",
         "data": {
           "map_key": "Web JS API Key",
           "security_code": "JS API security code",
@@ -11,7 +11,8 @@
       }
     },
     "abort": {
-      "single_instance_allowed": "Already configured"
+      "single_instance_allowed": "Already configured",
+      "legacy_entry_exists": "Remove the legacy LUXE Location integration and restart Home Assistant first. Do not delete the history database."
     },
     "error": {
       "empty": "All keys are required"
