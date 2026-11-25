@@ -10,7 +10,6 @@ import sqlite3
 import time
 
 from .history_logic import recorder_changes
-from .database_migration import migrate_database
 from .const import (WINDOW, HISTORY_RETENTION_DAYS, DAY_MS,
     BACKFILL_RETRY_S, BACKFILL_OVERLAP_MS, RECORDER_MIN_DELAY_MS,
     RECORDER_DEFAULT_COMMIT_S, RECORDER_COMMIT_BUFFER_MS, RECORDER_BOUNDARY_MS,
@@ -51,7 +50,6 @@ class Store:
     def __init__(self, hass):
         self.hass = hass
         self.path = Path(hass.config.path("locaris", "location.db"))
-        self.legacy_path = Path(hass.config.path("luxe_location", "location.db"))
         self.lock = asyncio.Lock()
         self.devices = set()
         self.managed = set()
@@ -102,29 +100,31 @@ class Store:
         return await self.hass.async_add_executor_job(self.db, fn, *args)
 
     def initialize(self):
-        result = migrate_database(self.legacy_path, self.path)
-        if result == "migrated":
-            _LOGGER.info("Locaris database migrated successfully; legacy backup retained")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path, timeout=SQLITE_START_TIMEOUT_S)) as con:
             if con.execute("PRAGMA quick_check(1)").fetchone()[0] != "ok":
                 raise sqlite3.DatabaseError("Location database integrity check failed")
+            tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+            required = {"locaris_management", "locaris_paused", "locaris_metadata",
+                        "locaris_devices", "locaris_locations", "locaris_address_cache"}
+            if tables and not required.issubset(tables):
+                raise sqlite3.DatabaseError("Unexpected Locaris database schema")
             con.execute("PRAGMA journal_mode=WAL")
             con.execute("PRAGMA foreign_keys=ON")
             con.execute("PRAGMA secure_delete=ON")
             with con:
                 con.executescript("""
-                    CREATE TABLE IF NOT EXISTS probe_management (entity_id TEXT PRIMARY KEY, excluded INTEGER NOT NULL DEFAULT 0);
-                    CREATE TABLE IF NOT EXISTS probe_paused (entity_id TEXT PRIMARY KEY);
-                    CREATE TABLE IF NOT EXISTS probe_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                    CREATE TABLE IF NOT EXISTS probe_devices (
+                    CREATE TABLE IF NOT EXISTS locaris_management (entity_id TEXT PRIMARY KEY, excluded INTEGER NOT NULL DEFAULT 0);
+                    CREATE TABLE IF NOT EXISTS locaris_paused (entity_id TEXT PRIMARY KEY);
+                    CREATE TABLE IF NOT EXISTS locaris_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS locaris_devices (
                       entity_id TEXT PRIMARY KEY,
                       consent_at INTEGER NOT NULL,
                       import_from INTEGER NOT NULL,
                       history_cursor INTEGER NOT NULL
                     );
-                    CREATE TABLE IF NOT EXISTS probe_locations (
-                      entity_id TEXT NOT NULL REFERENCES probe_devices(entity_id) ON DELETE CASCADE,
+                    CREATE TABLE IF NOT EXISTS locaris_locations (
+                      entity_id TEXT NOT NULL REFERENCES locaris_devices(entity_id) ON DELETE CASCADE,
                       recorded_at INTEGER NOT NULL,
                       latitude REAL NOT NULL,
                       longitude REAL NOT NULL,
@@ -132,18 +132,17 @@ class Store:
                       source TEXT NOT NULL,
                       PRIMARY KEY(entity_id, recorded_at)
                     );
-                    CREATE INDEX IF NOT EXISTS probe_location_time ON probe_locations(recorded_at);
-                    CREATE TABLE IF NOT EXISTS probe_address_cache (
-                      entity_id TEXT NOT NULL REFERENCES probe_devices(entity_id) ON DELETE CASCADE,
+                    CREATE INDEX IF NOT EXISTS locaris_location_time ON locaris_locations(recorded_at);
+                    CREATE TABLE IF NOT EXISTS locaris_address_cache (
+                      entity_id TEXT NOT NULL REFERENCES locaris_devices(entity_id) ON DELETE CASCADE,
                       lon REAL NOT NULL, lat REAL NOT NULL, address TEXT NOT NULL,
                       created_at INTEGER NOT NULL,
                       PRIMARY KEY(entity_id,lon,lat)
                     );
-                    CREATE INDEX IF NOT EXISTS probe_address_time ON probe_address_cache(created_at);
+                    CREATE INDEX IF NOT EXISTS locaris_address_time ON locaris_address_cache(created_at);
                 """)
-                con.execute("INSERT OR IGNORE INTO probe_management SELECT entity_id,0 FROM probe_devices")
-                return ([r[0] for r in con.execute("SELECT entity_id FROM probe_devices WHERE entity_id NOT IN (SELECT entity_id FROM probe_paused)")],
-                        [(r[0],r[1]) for r in con.execute("SELECT entity_id,excluded FROM probe_management")])
+                return ([r[0] for r in con.execute("SELECT entity_id FROM locaris_devices WHERE entity_id NOT IN (SELECT entity_id FROM locaris_paused)")],
+                        [(r[0],r[1]) for r in con.execute("SELECT entity_id,excluded FROM locaris_management")])
 
     async def start(self):
         recording, management = await self.hass.async_add_executor_job(self.initialize)
@@ -152,7 +151,6 @@ class Store:
         self.excluded = {e for e, excluded in management if excluded}
         self.devices = set(recording) & self.managed
         await self.load_policy()
-        await self.migrate_discovery()
         await self.discover()
         await self.cleanup()
         self.ready = True
@@ -164,7 +162,7 @@ class Store:
             self.schedule_backfill(entity)
 
     async def load_policy(self):
-        row = await self.run(lambda c: c.execute("SELECT value FROM probe_metadata WHERE key=?", (POLICY_KEY,)).fetchone())
+        row = await self.run(lambda c: c.execute("SELECT value FROM locaris_metadata WHERE key=?", (POLICY_KEY,)).fetchone())
         if row:
             try:
                 self.policy = {**DEFAULT_POLICY, **validate_patch(json.loads(row[0]))}
@@ -181,34 +179,11 @@ class Store:
             if new == old:
                 return
             await self.run(lambda c: c.execute(
-                "INSERT INTO probe_metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                "INSERT INTO locaris_metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (POLICY_KEY, json.dumps(new, sort_keys=True))))
             self.policy = new
             if self.active and self.schedule:
                 self.schedule.update(old, new, time.monotonic())
-
-    async def migrate_discovery(self):
-        # v0.0.5 automatically admitted GPS entities without coordinates.
-        # Only remove legacy unrecorded entries whose current GPS entity lacks
-        # a valid position. Exclusions and existing historical data are retained.
-        candidates = {e for e in self.managed
-                      if (state := self.hass.states.get(e)) is not None
-                      and state.attributes.get("source_type") == "gps"
-                      and position(state) is None}
-        def migrate(c):
-            if c.execute("SELECT 1 FROM probe_metadata WHERE key='valid_position_discovery_v1'").fetchone():
-                return []
-            removed = []
-            for e in candidates:
-                if c.execute("SELECT 1 FROM probe_devices WHERE entity_id=?", (e,)).fetchone() or c.execute("SELECT 1 FROM probe_paused WHERE entity_id=?", (e,)).fetchone():
-                    continue
-                c.execute("DELETE FROM probe_management WHERE entity_id=? AND excluded=0", (e,))
-                removed.append(e)
-            c.execute("INSERT INTO probe_metadata VALUES ('valid_position_discovery_v1','1')")
-            return removed
-        async with self.lock:
-            removed = await self.run(migrate)
-            self.managed.difference_update(removed)
 
     async def discover(self, candidates=None):
         if candidates is None:
@@ -220,7 +195,7 @@ class Store:
             new = {e for e in candidates - self.managed - self.excluded
                    if position(self.hass.states.get(e)) is not None}
             if new:
-                await self.run(lambda c: c.executemany("INSERT OR IGNORE INTO probe_management VALUES (?,0)", [(e,) for e in new]))
+                await self.run(lambda c: c.executemany("INSERT OR IGNORE INTO locaris_management VALUES (?,0)", [(e,) for e in new]))
                 self.managed.update(new)
 
     def warn(self, message):
@@ -307,7 +282,7 @@ class Store:
         async with self.lock:
             if not self.active or not self.ready:
                 raise ValueError("not_loaded")
-            await self.run(lambda c: c.execute("INSERT INTO probe_management VALUES (?,0) ON CONFLICT(entity_id) DO UPDATE SET excluded=0", (entity,)))
+            await self.run(lambda c: c.execute("INSERT INTO locaris_management VALUES (?,0) ON CONFLICT(entity_id) DO UPDATE SET excluded=0", (entity,)))
             self.excluded.discard(entity)
             self.managed.add(entity)
 
@@ -316,14 +291,14 @@ class Store:
             if not self.active or not self.ready or entity not in self.managed:
                 raise ValueError("not_managed")
             def remove_db(c):
-                c.execute("INSERT INTO probe_management VALUES (?,1) ON CONFLICT(entity_id) DO UPDATE SET excluded=1", (entity,))
-                c.execute("INSERT OR IGNORE INTO probe_paused VALUES (?)", (entity,))
+                c.execute("INSERT INTO locaris_management VALUES (?,1) ON CONFLICT(entity_id) DO UPDATE SET excluded=1", (entity,))
+                c.execute("INSERT OR IGNORE INTO locaris_paused VALUES (?)", (entity,))
                 if delete_history:
-                    c.execute("DELETE FROM probe_address_cache WHERE entity_id=?", (entity,))
-                    c.execute("DELETE FROM probe_devices WHERE entity_id=?", (entity,))
+                    c.execute("DELETE FROM locaris_address_cache WHERE entity_id=?", (entity,))
+                    c.execute("DELETE FROM locaris_devices WHERE entity_id=?", (entity,))
                 else:
                     now = now_ms()
-                    c.execute("UPDATE probe_devices SET consent_at=?,import_from=?,history_cursor=? WHERE entity_id=?", (now,now,now,entity))
+                    c.execute("UPDATE locaris_devices SET consent_at=?,import_from=?,history_cursor=? WHERE entity_id=?", (now,now,now,entity))
             await self.run(remove_db)
             self.invalidate(entity)
             self.devices.discard(entity)
@@ -451,17 +426,17 @@ class Store:
 
     @staticmethod
     def insert(con, entity, rows, source, cursor=None):
-        device = con.execute("SELECT import_from FROM probe_devices WHERE entity_id=?", (entity,)).fetchone()
+        device = con.execute("SELECT import_from FROM locaris_devices WHERE entity_id=?", (entity,)).fetchone()
         if device is None:
             return 0
         now = now_ms()
         cutoff = max(now - WINDOW, device["import_from"])
         before = con.total_changes
-        con.executemany("INSERT OR IGNORE INTO probe_locations VALUES (?,?,?,?,?,?)",
+        con.executemany("INSERT OR IGNORE INTO locaris_locations VALUES (?,?,?,?,?,?)",
                         [(entity, *p, source) for p in rows if cutoff <= p[0] <= now])
         count = con.total_changes - before
         if cursor is not None:
-            con.execute("UPDATE probe_devices SET history_cursor=MAX(history_cursor,?) WHERE entity_id=?", (cursor, entity))
+            con.execute("UPDATE locaris_devices SET history_cursor=MAX(history_cursor,?) WHERE entity_id=?", (cursor, entity))
         return count
 
     async def write(self, entity, p, generation):
@@ -484,10 +459,10 @@ class Store:
                 return
             now = now_ms()
             def enable_db(c):
-                paused = c.execute("SELECT 1 FROM probe_paused WHERE entity_id=?", (entity,)).fetchone()
+                paused = c.execute("SELECT 1 FROM locaris_paused WHERE entity_id=?", (entity,)).fetchone()
                 cutoff = now - WINDOW if import_history and not paused else now
-                c.execute("INSERT INTO probe_devices VALUES (?,?,?,?) ON CONFLICT(entity_id) DO UPDATE SET consent_at=excluded.consent_at,import_from=excluded.import_from,history_cursor=excluded.history_cursor", (entity,now,cutoff,cutoff))
-                c.execute("DELETE FROM probe_paused WHERE entity_id=?", (entity,))
+                c.execute("INSERT INTO locaris_devices VALUES (?,?,?,?) ON CONFLICT(entity_id) DO UPDATE SET consent_at=excluded.consent_at,import_from=excluded.import_from,history_cursor=excluded.history_cursor", (entity,now,cutoff,cutoff))
+                c.execute("DELETE FROM locaris_paused WHERE entity_id=?", (entity,))
             await self.run(enable_db)
             self.invalidate(entity)
             self.devices.add(entity)
@@ -501,9 +476,9 @@ class Store:
             if entity not in self.devices:
                 return
             def pause_db(c):
-                c.execute("INSERT OR IGNORE INTO probe_paused VALUES (?)", (entity,))
+                c.execute("INSERT OR IGNORE INTO locaris_paused VALUES (?)", (entity,))
                 now = now_ms()
-                c.execute("UPDATE probe_devices SET consent_at=?,import_from=?,history_cursor=? WHERE entity_id=?", (now,now,now,entity))
+                c.execute("UPDATE locaris_devices SET consent_at=?,import_from=?,history_cursor=? WHERE entity_id=?", (now,now,now,entity))
             await self.run(pause_db)
             self.invalidate(entity)
             self.devices.discard(entity)
@@ -527,7 +502,7 @@ class Store:
             async with self.lock:
                 if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
                     return
-                row = await self.run(lambda c: c.execute("SELECT consent_at,import_from,history_cursor FROM probe_devices WHERE entity_id=?", (entity,)).fetchone())
+                row = await self.run(lambda c: c.execute("SELECT consent_at,import_from,history_cursor FROM locaris_devices WHERE entity_id=?", (entity,)).fetchone())
             if row is None:
                 return
             consent, earliest, cursor = row
@@ -552,7 +527,7 @@ class Store:
                 if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
                     return
                 baseline = await self.run(lambda c: c.execute(
-                    "SELECT latitude,longitude,accuracy FROM probe_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at DESC LIMIT 1",
+                    "SELECT latitude,longitude,accuracy FROM locaris_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at DESC LIMIT 1",
                     (entity, earliest, start)).fetchone())
                 if baseline is not None:
                     previous = tuple(baseline)
@@ -579,7 +554,7 @@ class Store:
                 async with self.lock:
                     if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
                         return
-                    current = await self.run(lambda c: c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?", (entity,)).fetchone())
+                    current = await self.run(lambda c: c.execute("SELECT consent_at FROM locaris_devices WHERE entity_id=?", (entity,)).fetchone())
                     if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation or current is None or current[0] != consent:
                         return
                     if not self.recorder_available(recorder):
@@ -625,8 +600,8 @@ class Store:
                 return
             cutoff = now_ms() - WINDOW
             def prune(c):
-                c.execute("DELETE FROM probe_locations WHERE recorded_at < ?", (cutoff,))
-                c.execute("DELETE FROM probe_address_cache WHERE created_at < ?", (cutoff,))
+                c.execute("DELETE FROM locaris_locations WHERE recorded_at < ?", (cutoff,))
+                c.execute("DELETE FROM locaris_address_cache WHERE created_at < ?", (cutoff,))
             await self.run(prune)
             await self.hass.async_add_executor_job(self.checkpoint_if_needed)
             self.last_cleanup = now_ms()
@@ -637,7 +612,7 @@ class Store:
         radius = 30
         dy = radius / 111000
         dx = min(180, dy / max(.001, abs(math.cos(math.radians(lat)))))
-        rows = con.execute("""SELECT lon,lat,address,created_at FROM probe_address_cache
+        rows = con.execute("""SELECT lon,lat,address,created_at FROM locaris_address_cache
             WHERE entity_id=? AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?
             AND created_at>=?""", (entity,lon-dx,lon+dx,lat-dy,lat+dy,now_ms()-WINDOW)).fetchall()
         best = None
@@ -649,18 +624,18 @@ class Store:
 
     @staticmethod
     def save_address(con, entity, lon, lat, address):
-        con.execute("INSERT INTO probe_address_cache VALUES (?,?,?,?,?) ON CONFLICT(entity_id,lon,lat) DO UPDATE SET address=excluded.address,created_at=excluded.created_at", (entity,lon,lat,address,now_ms()))
+        con.execute("INSERT INTO locaris_address_cache VALUES (?,?,?,?,?) ON CONFLICT(entity_id,lon,lat) DO UPDATE SET address=excluded.address,created_at=excluded.created_at", (entity,lon,lat,address,now_ms()))
         # Bound storage independently of the retention window.
-        con.execute("DELETE FROM probe_address_cache WHERE rowid IN (SELECT rowid FROM probe_address_cache ORDER BY created_at DESC LIMIT -1 OFFSET 10000)")
+        con.execute("DELETE FROM locaris_address_cache WHERE rowid IN (SELECT rowid FROM locaris_address_cache ORDER BY created_at DESC LIMIT -1 OFFSET 10000)")
 
     async def storage_stats(self):
         def read(con):
             cutoff = now_ms() - WINDOW
             # Foreign keys guarantee every location belongs to a stored device.
-            location_count = con.execute("""SELECT COUNT(*) FROM probe_locations WHERE recorded_at>=?""",
+            location_count = con.execute("""SELECT COUNT(*) FROM locaris_locations WHERE recorded_at>=?""",
                 (cutoff,)).fetchone()[0]
             address_count = con.execute(
-                "SELECT COUNT(*) FROM probe_address_cache WHERE created_at>=?",
+                "SELECT COUNT(*) FROM locaris_address_cache WHERE created_at>=?",
                 (cutoff,)).fetchone()[0]
             return location_count, address_count
         async with self.lock:

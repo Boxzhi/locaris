@@ -1,32 +1,26 @@
-name: Prepare Locaris migration package
+name: Validate Locaris
 
 on:
   push:
-    branches: [locaris-migration]
+    branches: [main, locaris-migration]
+  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
-
-concurrency:
-  group: locaris-migration-build
-  cancel-in-progress: true
+  contents: read
 
 jobs:
-  validate-and-build:
-    if: github.ref == 'refs/heads/locaris-migration'
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Validate integration and run tests
+      - name: Validate Python, JavaScript and version
         run: |
           python -m compileall -q custom_components/locaris tests
           python -m unittest discover -s tests -p 'test_*.py'
@@ -40,11 +34,15 @@ jobs:
           assert re.fullmatch(r"\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?", v)
           assert f"VERSION='{v}'" in (p/"panel.js").read_text()
           assert f"?v={v}" in (p/"__init__.py").read_text()
+          assert not (p/"database_migration.py").exists()
+          for file in p.rglob("*"):
+              if file.suffix in (".py", ".js", ".json"):
+                  content = file.read_text()
+                  assert "luxe_location" not in content and "probe_" not in content, file
           PY
-      - name: Generate approved brand resources
+      - name: Validate committed brand PNGs
         run: |
-          python -m pip install 'CairoSVG==2.7.1' 'Pillow==11.3.0'
-          python scripts/build_brand.py
+          python -m pip install 'Pillow==11.3.0'
           python - <<'PY'
           from pathlib import Path
           from PIL import Image
@@ -59,27 +57,3 @@ jobs:
                   assert im.size == size and im.mode == "RGBA", name
                   assert im.getchannel("A").getextrema() == (0, 255), name
           PY
-      - name: Prepare manual installation archive
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import zipfile
-          root=Path("custom_components/locaris")
-          with zipfile.ZipFile("Locaris-migration-install.zip","w",zipfile.ZIP_DEFLATED) as z:
-              for path in sorted(root.rglob("*")):
-                  if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
-                      z.write(path, path.as_posix())
-          PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Locaris-migration-install
-          path: Locaris-migration-install.zip
-          if-no-files-found: error
-      - name: Commit validated PNGs only to migration branch
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add custom_components/locaris/brand/*.png
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m "Add validated Locaris brand PNGs"
-          git push origin HEAD:refs/heads/locaris-migration

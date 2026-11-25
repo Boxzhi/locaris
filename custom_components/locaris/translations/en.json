@@ -11,8 +11,7 @@
       }
     },
     "abort": {
-      "single_instance_allowed": "Already configured",
-      "legacy_entry_exists": "Remove the legacy LUXE Location integration and restart Home Assistant first. Do not delete the history database."
+      "single_instance_allowed": "Already configured"
     },
     "error": {
       "empty": "All keys are required"

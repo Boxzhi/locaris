@@ -2,24 +2,27 @@
 
 ![Locaris](assets/logo.svg)
 
-Home Assistant 独立位置中心。实时位置、历史轨迹、设备管理、运行策略；仅管理员访问，被动读取已有 GPS 定位。历史数据保留 30 天。地图及地址解析使用高德服务。
+Home Assistant 独立位置中心。仅管理员访问，被动读取已有 GPS 定位。支持实时位置、历史轨迹、设备管理、运行策略。历史数据保留 30 天，地图及地址解析使用高德服务。
 
-> v0.2.1-preview 是独立迁移候选分支，尚未正式发布。不要作为现有 HACS 安装的常规更新。主分支仍保留原集成。
+当前版本：v0.2.2-preview，正式版前验收版本。
 
-## 迁移与回退
+## 安装
 
-详见 [MIGRATION.md](MIGRATION.md)。卸载旧集成后重新添加 Locaris，首次启动安全复制旧 SQLite 数据库至 /config/locaris/location.db，保留旧库作为手动回退备份，不直接编辑 HA 内部配置。
+1. 在 HACS 的自定义仓库中添加 `https://github.com/Boxzhi/locaris`，类型选择集成（Integration）。
+2. 下载 Locaris 并重启 Home Assistant。
+3. 在设置 → 设备与服务 → 添加集成，搜索 Locaris，填写高德 Web JS API Key、JS API 安全密钥及 Web 服务 Key。
 
-## 安装验收
+本版本是独立安装，不导入其他集成的配置或数据库。数据仅保存在 `/config/locaris/location.db`。首次开启设备历史记录时仍可按原有规则从 HA Recorder 补查现存定位。请仅为有位置共享许可的设备开启历史记录。
 
-下载 [迁移候选分支 ZIP](https://github.com/Boxzhi/locaris/archive/refs/heads/locaris-migration.zip)，按照迁移文档备份并卸载旧集成后，将其中 `custom_components/locaris/` 完整复制至 HA 配置目录，再重启并添加 Locaris。此分支尚不作为 HACS 常规更新使用。
+## 使用
 
-## 品牌资源
+- 侧边栏「位置中心」包含实时位置、历史轨迹、设备管理、设置。
+- 标准、卫星和深色地图可在地图工具栏切换。
+- 四项运行策略在设置中调整，历史保留固定 30 天。
 
-assets/ 保存北极星 SVG，custom_components/locaris/brand/ 已包含八张经过自动化尺寸及透明通道检查的 PNG，无需额外安装或生成。开发者可执行 `python scripts/build_brand.py` 重新构建。
+## 品牌及测试
 
-## 测试
+集成目录内 brand/ 已包含深浅主题 Icon、Logo 及高清 PNG。开发者可使用 `python scripts/build_brand.py` 重建图片（需 CairoSVG）。
+运行测试：`python -m unittest discover -s tests -p 'test_*.py'`。
 
-`python -m unittest discover -s tests -p 'test_*.py'`
-
-历史预览日志：[CHANGELOG-preview.md](CHANGELOG-preview.md)。
+真实 HA/HACS 安装及移动端回归尚待验收，不属于正式稳定版。

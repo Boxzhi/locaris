@@ -11,8 +11,7 @@
       }
     },
     "abort": {
-      "single_instance_allowed": "已经配置",
-      "legacy_entry_exists": "请先移除旧版 LUXE Location 集成并重启 Home Assistant。请勿删除历史数据库。"
+      "single_instance_allowed": "已经配置"
     },
     "error": {
       "empty": "请填写所有凭据"

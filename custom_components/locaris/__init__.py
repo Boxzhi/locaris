@@ -23,7 +23,6 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "locaris"
 PANEL = "locaris"
 WEB_COMPONENT = "locaris-panel"
-LEGACY_DOMAIN = "luxe_location_probe"
 
 def checked(fn):
     def validate(value):
@@ -167,7 +166,7 @@ async def ws_history(hass, connection, msg):
             return
         generation = store.generations.get(entity, 0)
         def read(con):
-            sql = "SELECT recorded_at,latitude,longitude,accuracy FROM probe_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at"
+            sql = "SELECT recorded_at,latitude,longitude,accuracy FROM locaris_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at"
             args = (entity,max(start,now_ms()-WINDOW),min(end,now_ms()+1))
             if msg["collapse_repeated"]:
                 return collapse_history(con.execute(sql,args))
@@ -300,7 +299,7 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
             return
         initial_generation=store.generations.get(entity,0)
         if "recorded_at" in msg:
-            row=await store.run(lambda c:c.execute("SELECT longitude,latitude FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
+            row=await store.run(lambda c:c.execute("SELECT longitude,latitude FROM locaris_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
             coords=tuple(row) if row else None
         else:
             current_state=hass.states.get(entity)
@@ -323,13 +322,13 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
             if not store.active or not store.ready or entity not in store.managed or store.generations.get(entity,0)!=initial_generation:
                 connection.send_result(msg["id"],{"address":None})
                 return
-            generation=await store.run(lambda c:c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?",(entity,)).fetchone())
+            generation=await store.run(lambda c:c.execute("SELECT consent_at FROM locaris_devices WHERE entity_id=?",(entity,)).fetchone())
             if not generation or ("recorded_at" not in msg and entity not in store.devices):
                 connection.send_result(msg["id"],{"address":None})
                 return
             generation=generation[0]
             if "recorded_at" in msg:
-                exists=await store.run(lambda c:c.execute("SELECT 1 FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
+                exists=await store.run(lambda c:c.execute("SELECT 1 FROM locaris_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
                 if not exists:
                     connection.send_result(msg["id"],{"address":None})
                     return
@@ -363,7 +362,7 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
                 connection.send_result(msg["id"],{"address":None})
                 return
             if "recorded_at" in msg:
-                exists=await store.run(lambda c:c.execute("SELECT 1 FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
+                exists=await store.run(lambda c:c.execute("SELECT 1 FROM locaris_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
                 if not exists:
                     connection.send_result(msg["id"],{"address":None})
                     return
@@ -386,11 +385,11 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
         except Exception:
             pass
         async with store.lock:
-            current=await store.run(lambda c:c.execute("SELECT consent_at FROM probe_devices WHERE entity_id=?",(entity,)).fetchone()) if store.active else None
+            current=await store.run(lambda c:c.execute("SELECT consent_at FROM locaris_devices WHERE entity_id=?",(entity,)).fetchone()) if store.active else None
             if not await current_admin(hass, connection) or not valid() or not current or current[0]!=generation or store.generations.get(entity,0)!=initial_generation or not store.ready or entity not in store.managed or ("recorded_at" not in msg and entity not in store.devices):
                 address=None
             if valid() and "recorded_at" in msg:
-                exists=await store.run(lambda c:c.execute("SELECT 1 FROM probe_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
+                exists=await store.run(lambda c:c.execute("SELECT 1 FROM locaris_locations WHERE entity_id=? AND recorded_at=? AND recorded_at>=?",(entity,msg["recorded_at"],now_ms()-WINDOW)).fetchone())
                 if not exists or not valid():
                     connection.send_result(msg["id"],{"address":None})
                     return
@@ -414,10 +413,6 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
 async def async_setup(hass, config):
     return True
 async def async_setup_entry(hass, entry):
-    # Require removal of the legacy config entry before copying its database.
-    if hass.config_entries.async_entries(LEGACY_DOMAIN):
-        _LOGGER.error("Remove the legacy LUXE Location config entry and restart Home Assistant before setting up Locaris")
-        return False
     state = hass.data.setdefault(DOMAIN,{})
     registered = state.setdefault("registered_steps", set())
     if state.get("registered"):
@@ -442,7 +437,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.1-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.2-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)
