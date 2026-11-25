@@ -1,0 +1,26 @@
+name: Publish Locaris v0.2.11-preview
+on:
+  push:
+    branches: ['release/v0.2.11-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.11-preview >/dev/null 2>&1; then exit 0; fi
+          cat > /tmp/notes.md <<'EOF'
+          ## 日期时间与历史空态优化
+          - 当天仅显示 HH:mm:ss，昨日显示「昨日 HH:mm:ss」，今年更早日期使用 MM-DD HH:mm:ss，跨年使用 YYYY-MM-DD HH:mm:ss。
+          - 实时位置、历史参考位置、最近清理时间统一复用日期时间格式；日期选择器使用对应纯日期格式，单日时间轴仅显示时间。
+          - 无记录时移除零计数与参考位置冗余说明，保留地址、最后真实记录时间。
+          - 不修改内部日期查询、数据库或定位采集逻辑。
+          - 新增两组回归测试，CI 全部通过；实际 HA 界面待验收。
+          EOF
+          gh release create v0.2.11-preview --target 702ba764409c71a742fad9975bf19732a1253da7 --title "Locaris v0.2.11-preview" --notes-file /tmp/notes.md --prerelease --latest=false
