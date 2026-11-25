@@ -1,4 +1,4 @@
-const VERSION='0.1.16-preview';
+const VERSION='0.1.17-preview';
 let sdkPromise;
 function sdk(config){
   if(sdkPromise)return sdkPromise;
@@ -124,25 +124,6 @@ class LocationPanel extends HTMLElement{
     }catch(e){}
     this.hostFrame=null;this.hostBackground=null;this.hostAppliedColor=null;
     this.style.removeProperty('--lx-host-safe-bottom');this.style.removeProperty('--lx-host-bg');
-  }
-  layoutDiagnostics(){
-    const round=n=>Math.round(n*100)/100;
-    const describe=node=>{
-      if(!node)return null;
-      const r=node.getBoundingClientRect(),c=node.ownerDocument.defaultView.getComputedStyle(node);
-      return {tag:node.tagName,top:round(r.top),bottom:round(r.bottom),width:round(r.width),height:round(r.height),clientHeight:node.clientHeight,scrollHeight:node.scrollHeight,paddingTop:c.paddingTop,paddingBottom:c.paddingBottom,marginBottom:c.marginBottom,background:c.backgroundColor,overflowY:c.overflowY,position:c.position,cssHeight:c.height};
-    };
-    const probe=document.createElement('div');probe.style.cssText='position:absolute;visibility:hidden;pointer-events:none;padding-bottom:env(safe-area-inset-bottom,0px);padding-top:env(safe-area-inset-top,0px);';this.append(probe);
-    const safe={top:getComputedStyle(probe).paddingTop,bottom:getComputedStyle(probe).paddingBottom};probe.remove();
-    let parent={accessible:false};try{
-      const frame=window.frameElement;
-      if(frame){parent={accessible:true,frame:describe(frame),ancestors:[],viewport:{innerHeight:window.parent.innerHeight,clientHeight:window.parent.document.documentElement.clientHeight,visualHeight:window.parent.visualViewport?.height??null},body:describe(window.parent.document.body)};
-        let n=frame.parentElement||frame.getRootNode()?.host;
-        for(let i=0;i<6&&n;i++){parent.ancestors.push(describe(n));n=n.parentElement||n.getRootNode()?.host;}
-      }
-    }catch(e){}
-    const nav=this.querySelector('.lx-tabs'),last=nav?.lastElementChild,vv=window.visualViewport,viewportBottom=vv?vv.height+vv.offsetTop:window.innerHeight;
-    return {version:VERSION,page:this.page,hostSafeBottom:this.style.getPropertyValue('--lx-host-safe-bottom'),hostBackground:this.style.getPropertyValue('--lx-host-bg'),showHeader:this.showHeader,inIframe:window!==window.top,devicePixelRatio:window.devicePixelRatio,screen:{width:screen.width,height:screen.height},inner:{width:window.innerWidth,height:window.innerHeight},client:{width:document.documentElement.clientWidth,height:document.documentElement.clientHeight},visualViewport:vv?{width:vv.width,height:vv.height,offsetTop:vv.offsetTop,offsetLeft:vv.offsetLeft,scale:vv.scale}:null,safeArea:safe,viewportCss:this.style.getPropertyValue('--lx-viewport'),viewportMeta:document.querySelector('meta[name=viewport]')?.content??null,html:describe(document.documentElement),body:describe(document.body),panel:describe(this),shell:describe(this.querySelector('.lx-shell')),content:describe(this.querySelector('.lx-content')),map:describe(this.querySelector('.lx-map')),nav:describe(nav),navButton:describe(last),navBottomGap:nav?round(viewportBottom-nav.getBoundingClientRect().bottom):null,buttonBottomGap:last&&nav?round(nav.getBoundingClientRect().bottom-last.getBoundingClientRect().bottom):null,parent};
   }
   startViewport(){
     this.stopViewport();
@@ -603,11 +584,8 @@ class LocationPanel extends HTMLElement{
     }else{
       const d=data.diagnostics,card=el('section',undefined,'lx-card');card.append(el('h2','数据存储'));
       for(const [name,value] of [['历史保留','30 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.devices.reduce((s,x)=>s+x.count,0))],['最近清理',fmt(d.last_cleanup)],['错误次数',String(d.errors)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
-      card.append(button('复制诊断',async()=>{try{await navigator.clipboard.writeText(JSON.stringify({storage:d,layout:this.layoutDiagnostics()},null,2));this.status('诊断已复制');}catch(e){this.status('复制失败');}}));stack.append(card);
-      const layoutCard=el('section',undefined,'lx-card');layoutCard.append(el('h2','布局诊断'),el('p','复制视口、安全区域及宿主 iframe 尺寸，不含定位数据。','lx-muted'));
-      const output=el('textarea');output.readOnly=true;output.style.cssText='width:100%;min-height:120px;font:11px monospace;background:var(--lx-card);color:inherit;border:1px solid var(--lx-line);border-radius:8px;margin-top:8px';output.hidden=true;
-      const copy=button('复制布局诊断',async()=>{const report=JSON.stringify(this.layoutDiagnostics(),null,2);try{await navigator.clipboard.writeText(report);this.status('布局诊断已复制');}catch(e){output.hidden=false;output.value=report;output.focus();output.select();}});
-      layoutCard.append(copy,output);stack.append(layoutCard);
+      card.append(button('复制诊断',async()=>{try{await navigator.clipboard.writeText(JSON.stringify(d,null,2));this.status('诊断已复制');}catch(e){this.status('复制失败');}}));stack.append(card);
+
       const mapSettings=el('section',undefined,'lx-card');mapSettings.append(el('h2','地图设置'));const layer=el('select',undefined,'lx-field');layer.setAttribute('aria-label','地图图层');for(const [id,name] of [['standard','标准地图'],['satellite','卫星地图'],['dark','深色地图']]){const o=el('option',name);o.value=id;layer.append(o);}layer.value=this.mapLayer||'standard';layer.onchange=()=>{this.mapLayer=layer.value;};mapSettings.append(layer);stack.prepend(mapSettings);
       const ui=el('section',undefined,'lx-card');ui.append(el('h2','界面设置'));const uiRow=el('div',undefined,'lx-row'),uiLabel=el('label',undefined,'lx-switch'),uiToggle=el('input');uiToggle.type='checkbox';uiToggle.checked=this.showHeader;uiToggle.setAttribute('aria-label','显示顶部标题栏');uiToggle.onchange=()=>{this.showHeader=uiToggle.checked;try{localStorage.setItem('luxe_location.show_header',this.showHeader?'1':'0');}catch(e){}this.applyHeader();};uiLabel.append(uiToggle);uiRow.append(el('span','显示顶部标题栏'),uiLabel);ui.append(uiRow);stack.prepend(ui);
       const about=el('section',undefined,'lx-card');about.append(el('h2','关于'),el('div','LUXE Location · '+VERSION),el('p','仅被动读取 HA 已有定位。真实定位仅展示已开启历史记录的设备；地址按需通过高德解析，缓存于 HA 内存和 SQLite；地图安全代理使用短期会话路径。','lx-muted'));stack.append(about);
