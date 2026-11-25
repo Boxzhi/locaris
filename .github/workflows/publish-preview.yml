@@ -1,0 +1,29 @@
+name: Publish Locaris v0.2.5-preview
+on:
+  push:
+    branches: ['release/v0.2.5-preview']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified preview commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.5-preview >/dev/null 2>&1; then
+            exit 0
+          fi
+          cat > /tmp/notes.md <<'EOF'
+          ## 历史轨迹同步体验优化
+          - 显示等待导入、正在导入、同步及等待重试等真实状态。
+          - 历史数据版本检测，版本未变化时跳过 SQLite 历史列表查询。
+          - 新数据静默刷新，保留地图视角、记录展开、列表滚动锚点及地址缓存。
+          - 保持数据库结构、定位去重及 Recorder 补查策略不变。
+          - 新增历史版本与条件查询回归测试。
+          - CI 全部通过，真实 HA 环境与多终端交互待验收。
+          EOF
+          gh release create v0.2.5-preview --target fece82cc230d503d25445850cd66b7a748d39d3b --title "Locaris v0.2.5-preview" --notes-file /tmp/notes.md --prerelease --latest=false
