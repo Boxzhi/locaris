@@ -116,6 +116,7 @@ async def ws_history(hass, connection, msg):
         if not store.active or not store.ready or entity not in store.managed:
             connection.send_error(msg["id"], "invalid_device", "Device not managed")
             return
+        generation = store.generations.get(entity, 0)
         def read(con):
             sql = "SELECT recorded_at,latitude,longitude,accuracy FROM probe_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at"
             args = (entity,max(start,now_ms()-WINDOW),min(end,now_ms()+1))
@@ -129,7 +130,7 @@ async def ws_history(hass, connection, msg):
             _LOGGER.warning("Location history query failed (no coordinates logged)")
             connection.send_error(msg["id"], "history_failed", "History query failed")
             return
-    if not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store or entity not in store.managed:
+    if not store.active or not store.ready or hass.data.get(DOMAIN,{}).get("store") is not store or entity not in store.managed or store.generations.get(entity, 0) != generation:
         connection.send_error(msg["id"], "not_loaded", "Storage not ready")
         return
     connection.send_result(msg["id"], {"points":rows,"truncated":truncated,"collapsed":hidden})
@@ -354,7 +355,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_sessions"] = {}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.33-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.34-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)

@@ -327,6 +327,8 @@ class Store:
             # Carry the last valid payload across windows, not across consent changes.
             # A persisted predecessor is a fallback if Recorder cannot provide
             # its start state (for example after a database outage).
+            # Without a known in-consent predecessor, retain the first real
+            # sample as an anchor instead of trusting a synthetic prior state.
             previous = None
             async with self.lock:
                 if not self.active or entity not in self.devices or self.generations.get(entity, 0) != generation:
@@ -342,7 +344,7 @@ class Store:
                 end_dt = datetime.fromtimestamp(stop / 1000, timezone.utc)
                 def read():
                     result = history.get_significant_states(self.hass, begin_dt, end_dt, [entity],
-                        include_start_time_state=start > earliest, significant_changes_only=False,
+                        include_start_time_state=previous is not None and start > earliest, significant_changes_only=False,
                         minimal_response=False, no_attributes=False)
                     # A synthetic start state is stamped at begin_dt (start-1).
                     # It is comparison context only, never a new stored sample.
