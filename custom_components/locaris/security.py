@@ -19,7 +19,7 @@ def coordinate(value, bound):
     return float(value)
 
 def session_path(value):
-    if not isinstance(value, str) or not re.fullmatch(r"/api/luxe_location/[A-Za-z0-9_-]{43}/_AMapService", value):
+    if not isinstance(value, str) or not re.fullmatch(r"/api/locaris/[A-Za-z0-9_-]{43}/_AMapService", value):
         raise ValueError("Invalid session path")
     return value
 

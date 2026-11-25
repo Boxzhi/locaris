@@ -1,7 +1,7 @@
 {
-  "domain": "luxe_location_probe",
-  "name": "LUXE Location",
-  "version": "0.1.57-preview",
+  "domain": "locaris",
+  "name": "Locaris",
+  "version": "0.2.0-preview",
   "config_flow": true,
   "dependencies": [
     "frontend",

@@ -20,8 +20,10 @@ from .history_logic import collapse_history
 from . import security
 from .runtime_policy import validate_patch
 _LOGGER = logging.getLogger(__name__)
-DOMAIN = "luxe_location_probe"
-PANEL = "luxe-location-probe"
+DOMAIN = "locaris"
+PANEL = "locaris"
+WEB_COMPONENT = "locaris-panel"
+LEGACY_DOMAIN = "luxe_location_probe"
 
 def checked(fn):
     def validate(value):
@@ -46,12 +48,12 @@ async def ws_config(hass, connection, msg):
         return
     data = hass.data.get(DOMAIN, {}).get("active")
     if not data:
-        connection.send_error(msg["id"], "not_loaded", "Probe not loaded")
+        connection.send_error(msg["id"], "not_loaded", "Locaris not loaded")
         return
     state = hass.data[DOMAIN]
     sessions = state.get("proxy_sessions")
     if sessions is None:
-        connection.send_error(msg["id"], "not_loaded", "Probe not loaded")
+        connection.send_error(msg["id"], "not_loaded", "Locaris not loaded")
         return
     now = time.monotonic()
     for token in list(sessions):
@@ -59,7 +61,7 @@ async def ws_config(hass, connection, msg):
             sessions.pop(token)
     renew=msg.get("renew_path","")
     if renew:
-        prefix="/api/luxe_location/"
+        prefix="/api/locaris/"
         suffix="/_AMapService"
         token=renew[len(prefix):-len(suffix)] if renew.startswith(prefix) and renew.endswith(suffix) else ""
         session=sessions.get(token)
@@ -73,7 +75,7 @@ async def ws_config(hass, connection, msg):
         sessions.pop(next(iter(sessions)))
     token = secrets.token_urlsafe(32)
     sessions[token] = {"expires":now+MAP_SESSION_TTL_S,"times":[],"user":connection.user.id}
-    connection.send_result(msg["id"], {"map_key":data["map_key"],"proxy_path":"/api/luxe_location/"+token+"/_AMapService"})
+    connection.send_result(msg["id"], {"map_key":data["map_key"],"proxy_path":"/api/locaris/"+token+"/_AMapService"})
 @websocket_api.websocket_command({vol.Required("type"): DOMAIN + "/storage", vol.Required("action"): vol.In(["list","enable","disable","add","remove","policy"]), vol.Optional("entity_id"): checked(security.entity_id), vol.Optional("import_history", default=True): bool, vol.Optional("delete_history", default=False): bool, vol.Optional("include_position", default=False): bool, vol.Optional("include_storage", default=True): bool, vol.Optional("policy"): checked(validate_patch)})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -198,8 +200,8 @@ def gcj(lon, lat):
     return lon+dx*180/(a/root*math.cos(rad)*pi),lat+dy*180/(a*(1-ee)/(magic*root)*pi)
 
 class MapProxy(HomeAssistantView):
-    url = "/api/luxe_location/{token}/_AMapService/{path:.*}"
-    name = "api:luxe_location:map_proxy"
+    url = "/api/locaris/{token}/_AMapService/{path:.*}"
+    name = "api:locaris:map_proxy"
     requires_auth = False
 
     async def get(self, request, token, path):
@@ -412,12 +414,16 @@ async def resolve_address(hass, connection, msg, state, store, entity, runtime):
 async def async_setup(hass, config):
     return True
 async def async_setup_entry(hass, entry):
+    # Never start a second writer against the shared legacy database.
+    if hass.config_entries.async_entries(LEGACY_DOMAIN):
+        _LOGGER.error("Remove the legacy LUXE Location config entry and restart Home Assistant before setting up Locaris")
+        return False
     state = hass.data.setdefault(DOMAIN,{})
     registered = state.setdefault("registered_steps", set())
     if state.get("registered"):
         registered.update(("static","config","storage","history","address","proxy"))
     if "static" not in registered:
-        await hass.http.async_register_static_paths([StaticPathConfig("/luxe-location-probe-assets/panel.js", str(Path(__file__).parent / "panel.js"), False)])
+        await hass.http.async_register_static_paths([StaticPathConfig("/locaris-panel-assets/panel.js", str(Path(__file__).parent / "panel.js"), False)])
         registered.add("static")
     for name, command in (("config",ws_config),("storage",ws_storage),("history",ws_history),("address",ws_address)):
         if name not in registered:
@@ -436,7 +442,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=PANEL, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/luxe-location-probe-assets/panel.js?v=0.1.57-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.0-preview", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("store", None)
