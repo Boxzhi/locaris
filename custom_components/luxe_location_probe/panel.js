@@ -1,4 +1,4 @@
-const VERSION='0.1.52-preview';
+const VERSION='0.1.53-preview';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:450,MAP_MEDIUM_MS:650,MAP_FAR_MS:1350,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
@@ -381,8 +381,9 @@ class LocationPanel extends HTMLElement{
     try{
       const config=await ensureSdkConfig(this._hass);if(!valid())return;
       const A=await sdk(config);if(!valid())return;
-      this.A=A;this.baseLayers={standard:[A.createDefaultLayer()]};
-      map=new A.Map(target,{zoom:5,viewMode:'2D',mapStyle:'amap://styles/normal',layers:[...this.baseLayers.standard],resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});this.map=map;this.appliedLayer='standard';
+      this.A=A;this.vectorLayer=A.createDefaultLayer({visible:true});
+      const initialStyle=this.mapLayer==='dark'?'dark':'normal';
+      map=new A.Map(target,{zoom:5,viewMode:'2D',mapStyle:'amap://styles/'+initialStyle,layers:[this.vectorLayer],resizeEnable:true,dragEnable:true,zoomEnable:true,scrollWheel:true,doubleClickZoom:true,touchZoom:true});this.map=map;this.appliedLayer=initialStyle==='dark'?'dark':'standard';this.vectorStyle=initialStyle;this.satelliteLayers=null;
       const on=(name,fn)=>{const cb=()=>{if(this.map===map&&valid())fn();};map.on(name,cb);this.mapListeners.push([name,cb]);};
       this.mapListeners=[];
       on('dragstart',()=>{this.cancelCamera();this.liveExpanded=null;});
@@ -392,7 +393,7 @@ class LocationPanel extends HTMLElement{
   }
   destroyMap(){
     this.mapBuild=null;this.mapRenewPending=null;this.mapSessionError=false;this.mapSessionExpired=false;this.mapRenewRetryAt=0;this.cancelCamera();if(this.clusterFrame!=null){cancelAnimationFrame(this.clusterFrame);this.clusterFrame=null;}
-    this.liveExpanded=null;this.liveClusters=[];this.clusterSignature=null;this.historyOverlays=[];this.historyNumberMarkers=[];this.historyTrackData=null;this.historyTrackOverlays=null;this.historyXY=null;this.historyMarkerMap=null;this.appliedLayer=null;this.baseLayers=null;this.markers=new Map();this.didFit=false;
+    this.liveExpanded=null;this.liveClusters=[];this.clusterSignature=null;this.historyOverlays=[];this.historyNumberMarkers=[];this.historyTrackData=null;this.historyTrackOverlays=null;this.historyXY=null;this.historyMarkerMap=null;this.appliedLayer=null;this.vectorLayer=null;this.vectorStyle=null;this.satelliteLayers=null;this.markers=new Map();this.didFit=false;
     const map=this.map,listeners=this.mapListeners||[];this.map=null;this.mapListeners=[];
     if(map){for(const [name,cb] of listeners){try{map.off(name,cb);}catch(e){}}try{map.destroy();}catch(e){}}
   }
@@ -820,14 +821,31 @@ class LocationPanel extends HTMLElement{
     if(!['standard','satellite','dark'].includes(id))return;
     const map=this.map,A=this.A;
     if(map&&this.appliedLayer!==id){
-      // JS API 2.0 default vector layer, not the legacy TileLayer constructor.
-      // Keep the original standard layer separate from the dark layer.
-      const layers=this.baseLayers;
-      if(!layers[id])layers[id]=id==='satellite'?[new A.TileLayer.Satellite(),new A.TileLayer.RoadNet()]:[A.createDefaultLayer()];
-      // Replace the base layers first, then explicitly apply the target style.
-      // Do not recreate the map or touch camera/overlay state.
-      map.setLayers([...layers[id]]);
-      map.setMapStyle(id==='dark'?'amap://styles/dark':'amap://styles/normal');
+      // One permanent vector layer for normal/dark. Never replace it with
+      // another default layer or rely on setLayers to detach satellite tiles.
+      if(id==='satellite'){
+        if(!this.satelliteLayers)this.satelliteLayers=[new A.TileLayer.Satellite({visible:false}),new A.TileLayer.RoadNet({visible:false})];
+        const layers=this.satelliteLayers;
+        this.vectorLayer.hide();
+        // A layer may still be attached in some SDK builds after removal.
+        const attached=map.getLayers();
+        const missing=layers.filter(layer=>!attached.includes(layer));
+        if(missing.length)map.add(missing);
+        for(const layer of layers)layer.show();
+      }else{
+        const layers=this.satelliteLayers;
+        if(layers&&this.appliedLayer==='satellite'){
+          // Hide first so a delayed SDK detach cannot leave duplicate labels.
+          for(const layer of layers)layer.hide();
+          map.remove(layers);
+        }
+        this.vectorLayer.show();
+        const style=id==='dark'?'dark':'normal';
+        if(this.vectorStyle!==style){
+          map.setMapStyle('amap://styles/'+style);
+          this.vectorStyle=style;
+        }
+      }
       this.appliedLayer=id;
     }
     this.mapLayer=id;
