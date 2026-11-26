@@ -1,0 +1,29 @@
+name: Publish Locaris v1.0.0-rc.2
+on:
+  push:
+    branches: ['release/v1.0.0-rc.2']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v1.0.0-rc.2 >/dev/null 2>&1; then exit 0; fi
+          cat > /tmp/notes.md <<'EOF'
+          ## v1.0.0-rc.2 · 实时定位时间修复
+
+          - 启动时直接读取 Locaris 已授权历史，恢复实时定位变化时间，不依赖 Recorder 补查完成。
+          - 连续历史记录的定位属性存在差异时，不再因旧初始记录来源标记拒绝恢复；明确的启用快照不作为变化时间。
+          - 历史写入、补查和定位恢复可用时重新尝试恢复未知时间；数据库暂时失败时限频重试。
+          - 保留当前授权范围、30 天保留期限及实时变化优先级；未开启记录的设备不额外读取数据库。
+          - 新增脱敏专项回归测试及异步恢复竞争、权限边界测试，完整 CI 通过。
+
+          数据库结构及 UI 样式不变。此版本仍为正式候选版，需在真实 HA 环境验收。
+          EOF
+          gh release create v1.0.0-rc.2 --target 6329bc27ee57533acef926460f40de77629b08a0 --title "Locaris v1.0.0-rc.2" --notes-file /tmp/notes.md --prerelease --latest=false
