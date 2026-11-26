@@ -1,0 +1,31 @@
+name: Publish Locaris v1.0.0-rc.1
+on:
+  push:
+    branches: ['release/v1.0.0-rc.1']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v1.0.0-rc.1 >/dev/null 2>&1; then exit 0; fi
+          cat > /tmp/notes.md <<'EOF'
+          ## v1.0.0-rc.1 · 正式候选版
+
+          - 跨午夜自动更新日历、可选日期范围及相对时间，保留有效的已选日期。
+          - 首次启用历史记录时保留明确标注的已有位置基准，区分观察时间与实际定位变化。
+          - 优化 Recorder 初始样本识别、跨日去重、历史恢复及 SQLite 清理范围。
+          - 改善地图配置请求和 SDK 加载超时处理。
+          - 新增高德三项 API 凭据重新配置入口，保留历史和设置。
+          - 重构 README，补充隐私、安装、更新、卸载及故障排查说明。
+          - 增加配置流程、跨午夜、授权边界、历史存储及时间恢复测试；完整 CI 已通过。
+
+          保留现有 30 天数据策略、管理员权限、数据库结构和 UI 风格。建议升级前备份 Locaris 数据库。此版本仍为预发布候选版，真实 HA、HACS、高德地图及终端验收完成后再发布 v1.0.0。
+          EOF
+          gh release create v1.0.0-rc.1 --target 7634d4b33d9d6b75d09e10c0419fda415a1465ca --title "Locaris v1.0.0-rc.1" --notes-file /tmp/notes.md --prerelease --latest=false
