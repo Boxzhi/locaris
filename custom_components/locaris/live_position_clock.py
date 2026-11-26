@@ -43,8 +43,12 @@ class LivePositionClock:
 
 
 def last_recorded_change(con, entity, earliest, payload):
-    """Recover the start of the latest matching run, not daily anchors.
-    Never infer a transition from the first available sample alone.
+    """Recover the earliest observed matching point after a different payload.
+
+    An initial/legacy daily source is not evidence on its own, but a preceding
+    different retained payload establishes an observed change. Explicit enable
+    snapshots are observations of cached state, never a GPS change timestamp.
+    Without a differing predecessor require an explicitly confirmed transition.
     """
     latest = con.execute(
         "SELECT recorded_at,latitude,longitude,accuracy FROM locaris_locations "
@@ -60,16 +64,34 @@ def last_recorded_change(con, entity, earliest, payload):
         (entity, earliest, *payload),
     ).fetchone()
     if prior is None:
-        # A confirmed live state transition is sufficient even if the
-        # preceding point has already expired or was not stored.
-        first = con.execute(
-            "SELECT recorded_at,source FROM locaris_locations WHERE entity_id=? AND recorded_at>=? ORDER BY recorded_at LIMIT 1",
+        confirmed = con.execute(
+            "SELECT recorded_at FROM locaris_locations WHERE entity_id=? AND recorded_at>=? "
+            "AND source='state_change' ORDER BY recorded_at LIMIT 1",
             (entity, earliest),
         ).fetchone()
-        return first[0] if first is not None and first[1] == "state_change" else None
+        return confirmed[0] if confirmed is not None else None
     first = con.execute(
         "SELECT recorded_at,source FROM locaris_locations WHERE entity_id=? AND recorded_at>? "
         "ORDER BY recorded_at ASC LIMIT 1",
         (entity, prior[0]),
     ).fetchone()
-    return first[0] if first is not None and first[1] not in ("state_change_daily", "state_change_initial", "enable_snapshot", "recorder_initial") else None
+    if first is not None and first[1] != "enable_snapshot":
+        return first[0]
+    # Do not relabel a cached enable snapshot as a change. Only a subsequent
+    # explicitly confirmed transition can establish its own time.
+    confirmed = con.execute(
+        "SELECT recorded_at FROM locaris_locations WHERE entity_id=? AND recorded_at>? "
+        "AND source='state_change' ORDER BY recorded_at LIMIT 1",
+        (entity, prior[0]),
+    ).fetchone()
+    return confirmed[0] if confirmed is not None else None
+
+def authorized_recorded_change(con, entity, cutoff, payload):
+    """Read only the active consent interval, not paused/old history."""
+    row = con.execute(
+        "SELECT import_from FROM locaris_devices WHERE entity_id=? "
+        "AND entity_id NOT IN (SELECT entity_id FROM locaris_paused)", (entity,)
+    ).fetchone()
+    if row is None:
+        return None
+    return last_recorded_change(con, entity, max(cutoff, row[0]), payload)

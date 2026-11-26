@@ -11,7 +11,7 @@ import time
 
 from .history_logic import recorder_changes, migrate_change_only, compact_repeated
 from .history_sync import HistorySync
-from .live_position_clock import LivePositionClock, last_recorded_change
+from .live_position_clock import LivePositionClock, authorized_recorded_change
 from .const import (WINDOW, HISTORY_RETENTION_DAYS, DAY_MS,
     BACKFILL_RETRY_S, BACKFILL_OVERLAP_MS, RECORDER_MIN_DELAY_MS,
     RECORDER_DEFAULT_COMMIT_S, RECORDER_COMMIT_BUFFER_MS, RECORDER_BOUNDARY_MS,
@@ -73,6 +73,8 @@ class Store:
         self.warning_times = {}
         self.generations = {}
         self.live_clock = LivePositionClock()
+        self.clock_recovery_pending = set()
+        self.clock_recovery_retry = {}
         self.last_valid = {}
         self.initialized = False
         self.unsub = None
@@ -186,8 +188,45 @@ class Store:
         self.schedule = Schedule(self.policy, time.monotonic())
         self.discovery_listener = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self.discovery_changed)
         self.timer = async_track_time_interval(self.hass, self.scan_tick, timedelta(seconds=SCHEDULER_TICK_S))
+        # Restore from our own persisted history before setup returns, even
+        # when HA Recorder is unavailable or its import queue is busy.
+        for entity in sorted(self.devices):
+            await self.restore_live_time(entity, self.generations.get(entity, 0))
         for entity in sorted(self.devices):
             self.schedule_backfill(entity)
+
+    async def restore_live_time(self, entity, generation):
+        """Restore unknown clocks only, under current consent and generation."""
+        if not self.active or not self.ready or entity not in self.devices or self.generations.get(entity, 0) != generation:
+            return
+        payload = position(self.hass.states.get(entity))
+        if payload is None or self.live_clock.timestamp(entity, payload) is not None:
+            return
+        try:
+            stamp = await self.run(authorized_recorded_change, entity, now_ms()-WINDOW, payload)
+        except (sqlite3.Error, OSError):
+            if self.active and entity in self.devices and self.generations.get(entity, 0) == generation:
+                self.clock_recovery_retry[entity] = time.monotonic() + BACKFILL_RETRY_S
+            self.warn("Live position timestamp recovery deferred (no coordinates logged)")
+            return
+        if (self.active and self.ready and entity in self.devices
+                and self.generations.get(entity, 0) == generation
+                and position(self.hass.states.get(entity)) == payload):
+            self.clock_recovery_retry.pop(entity, None)
+            self.live_clock.restore(entity, payload, stamp)
+
+    @callback
+    def schedule_clock_recovery(self, entity):
+        generation = self.generations.get(entity, 0)
+        key = (entity, generation)
+        if not self.active or not self.ready or entity not in self.devices or key in self.clock_recovery_pending:
+            return
+        if self.clock_recovery_retry.get(entity, 0) > time.monotonic():
+            return
+        task = self.spawn(self.restore_live_time(entity, generation))
+        if task is not None:
+            self.clock_recovery_pending.add(key)
+            task.add_done_callback(lambda _: self.clock_recovery_pending.discard(key))
 
     async def load_policy(self):
         row = await self.run(lambda c: c.execute("SELECT value FROM locaris_metadata WHERE key=?", (POLICY_KEY,)).fetchone())
@@ -242,7 +281,13 @@ class Store:
         if not entity.startswith("device_tracker.") or entity in self.excluded:
             return
         if entity in self.managed:
-            self.live_clock.observe(entity, point(event.data.get("new_state")), position(event.data.get("old_state")))
+            sample = point(event.data.get("new_state"))
+            old_payload = position(event.data.get("old_state"))
+            self.live_clock.observe(entity, sample, old_payload)
+            # First valid state after startup/unavailability may arrive after
+            # the initial restore. Unrelated updates do not trigger SQL reads.
+            if sample is not None and old_payload is None and self.live_clock.timestamp(entity, sample[1:]) is None:
+                self.schedule_clock_recovery(entity)
             return
         if position(event.data.get("new_state")) is None:
             return
@@ -293,6 +338,10 @@ class Store:
         if not self.active or not self.ready or not self.schedule:
             return
         now = time.monotonic()
+        for entity, deadline in list(self.clock_recovery_retry.items()):
+            if now >= deadline:
+                self.clock_recovery_retry.pop(entity, None)
+                self.schedule_clock_recovery(entity)
         # Retry deadlines are independent of discovery, cleanup and normal backfill.
         for entity, deadline in list(self.retry_import.items()):
             if now >= deadline:
@@ -347,6 +396,7 @@ class Store:
         self.generations[entity] = self.generations.get(entity, 0) + 1
         self.history_sync.invalidate(entity)
         self.last_valid.pop(entity, None)
+        self.clock_recovery_retry.pop(entity, None)
         self.retry_import.pop(entity, None)
         self.recovery_from.pop(entity, None)
         self.backfill_pending.pop(entity, None)
@@ -489,6 +539,8 @@ class Store:
                 if self.active and self.ready and entity in self.devices and self.generations.get(entity, 0) == generation:
                     count = await self.run(self.insert, entity, [p], "state_change_initial" if initial else "state_change")
                     self.history_sync.changed(entity, count)
+                    if count:
+                        await self.restore_live_time(entity, generation)
         except Exception:
             self.defer_backfill(entity, generation, p[0])
             self.warn("Location write failed (no coordinates logged)")
@@ -564,6 +616,8 @@ class Store:
             if row is None:
                 return
             consent, earliest, cursor = row
+            # Retry from existing Locaris history before touching Recorder.
+            await self.restore_live_time(entity, generation)
             recorder = get_instance(self.hass)
             if not self.recorder_available(recorder):
                 self.defer_backfill(entity, generation)
@@ -619,6 +673,8 @@ class Store:
                         return
                     count = await self.run(self.insert, entity, rows, "recorder", stop)
                     self.history_sync.changed(entity, count)
+                    if count:
+                        await self.restore_live_time(entity, generation)
                 start = stop
             if self.active and entity in self.devices and self.generations.get(entity, 0) == generation and recovery is not None:
                 if end <= recovery:
@@ -627,17 +683,7 @@ class Store:
                     self.recovery_from.pop(entity, None)
             if self.active and entity in self.devices and self.generations.get(entity, 0) == generation and entity not in self.retry_import:
                 self.history_sync.completed.add(entity)
-                # Reuse only already-authorized historical rows; never query
-                # Recorder separately for devices with recording disabled.
-                current_payload = position(self.hass.states.get(entity))
-                if current_payload is not None and self.live_clock.timestamp(entity, current_payload) is None:
-                    try:
-                        stamp = await self.run(last_recorded_change, entity, max(earliest, now_ms()-WINDOW), current_payload)
-                        if (self.active and entity in self.devices and self.generations.get(entity, 0) == generation
-                                and position(self.hass.states.get(entity)) == current_payload):
-                            self.live_clock.restore(entity, current_payload, stamp)
-                    except (sqlite3.Error, OSError):
-                        self.warn("Live position timestamp recovery deferred (no coordinates logged)")
+                await self.restore_live_time(entity, generation)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -758,5 +804,7 @@ class Store:
             self.backfill_active.clear()
             self.backfill_pending.clear()
             self.live_clock.clear()
+            self.clock_recovery_pending.clear()
+            self.clock_recovery_retry.clear()
             self.last_valid.clear()
             self.warning_times.clear()
