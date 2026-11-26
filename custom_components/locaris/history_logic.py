@@ -28,13 +28,28 @@ def recorder_changes(states, start, stop, previous, earliest, point):
         prev = payload
     return rows, prev
 
-def compact_repeated(con, entity, cutoff, *, legacy=False):
+def compact_repeated(con, entity, cutoff, *, legacy=False, affected_from=None):
     """Remove redundant provisional/legacy anchors, never confirmed live changes.
     Only compare within one currently authorized recording interval.
     """
-    sources = {"state_change_initial", "state_change_daily"}
-    if legacy:
-        sources.add("recorder")
+    sources = {"state_change_initial", "state_change_daily", "enable_snapshot"}
+    if not legacy:
+        # Only provisional successors can become redundant after an insertion.
+        # The composite primary key handles each predecessor lookup efficiently.
+        candidates = con.execute(
+            "SELECT recorded_at,latitude,longitude,accuracy FROM locaris_locations "
+            "WHERE entity_id=? AND recorded_at>=? AND source IN ('state_change_initial','state_change_daily','enable_snapshot') ORDER BY recorded_at",
+            (entity, max(cutoff, affected_from if affected_from is not None else cutoff))).fetchall()
+        removed = 0
+        for row in candidates:
+            prior = con.execute(
+                "SELECT latitude,longitude,accuracy FROM locaris_locations WHERE entity_id=? "
+                "AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at DESC LIMIT 1",
+                (entity, cutoff, row[0])).fetchone()
+            if prior is not None and tuple(prior) == tuple(row)[1:]:
+                removed += con.execute("DELETE FROM locaris_locations WHERE entity_id=? AND recorded_at=?", (entity, row[0])).rowcount
+        return removed
+    sources.add("recorder")
     rows = con.execute(
         "SELECT recorded_at,latitude,longitude,accuracy,source FROM locaris_locations "
         "WHERE entity_id=? AND recorded_at>=? ORDER BY recorded_at", (entity, cutoff))
@@ -69,7 +84,7 @@ def history_reference(con, entity, start, cutoff):
     if row is None:
         return None
     previous = con.execute(
-        "SELECT recorded_at,latitude,longitude,accuracy FROM locaris_locations "
+        "SELECT recorded_at,latitude,longitude,accuracy,source FROM locaris_locations "
         "WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at DESC LIMIT 1",
         (entity, max(cutoff, row[0]), start)).fetchone()
     return dict(previous) if previous is not None else None

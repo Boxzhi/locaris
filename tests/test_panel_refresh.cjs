@@ -122,3 +122,18 @@ test('history calendar shows full ISO local date, labels today and removes quick
   assert.doesNotMatch(calendar,/const footer=|button\('昨日'|button\('今日'/);
   assert.match(source,/\.lx-cal-today:not\(\[aria-pressed=true\]\)\{color:var\(--lx-accent\);font-weight:bold\}/);
 });
+
+
+test('calendar range moves across midnight and new year with a 30 day window',()=>{
+  const context={};vm.createContext(context);
+  const start=source.indexOf('const pad2='),end=source.indexOf('const el=',start);
+  vm.runInContext(source.slice(start,end)+'\nthis.range=calendarRange;',context);
+  const before=context.range(new Date(2026,11,31,23,59),30);
+  const after=context.range(new Date(2027,0,1,0,0),30);
+  assert.equal(before.maxDate,'2026-12-31');assert.equal(before.minDate,'2026-12-02');
+  assert.equal(after.maxDate,'2027-01-01');assert.equal(after.minDate,'2026-12-03');
+  assert.match(source,/this.calendarRefresh\?\.\(now\)/);
+  assert.match(source,/if\(day.value<minDate\|\|day.value>maxDate\)/);
+  assert.match(source,/this.calendarRefresh=null/);
+  assert.match(source,/this.syncLocalDay\(new Date\(now\)\)/);
+});

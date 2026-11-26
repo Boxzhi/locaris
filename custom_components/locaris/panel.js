@@ -1,4 +1,4 @@
-const VERSION='0.2.12-preview';
+const VERSION='1.0.0-rc.1';
 const POLICY_OPTIONS=Object.freeze({discovery_minutes:[5,10,15,30,60],live_refresh_seconds:[15,30,60,120],backfill_minutes:[30,60,120,240],track_gap_minutes:[10,15,30,60]});
 const DEFAULT_POLICY=Object.freeze({discovery_minutes:10,live_refresh_seconds:30,backfill_minutes:60,track_gap_minutes:30});
 const TIMING=Object.freeze({REFRESH_TICK_MS:5000,LIVE_DIRTY_MS:5000,DEVICE_REFRESH_MS:60000,HISTORY_REFRESH_MS:120000,HISTORY_TODAY_MS:10000,HISTORY_PENDING_MS:5000,HISTORY_PAST_MS:60000,READ_TIMEOUT_MS:15000,SETTINGS_REFRESH_MS:300000,ADDRESS_SUCCESS_MS:1800000,ADDRESS_FAILURE_MS:60000,MAP_CONFIG_TTL_MS:7200000,MAP_RETRY_MS:60000,SDK_TIMEOUT_MS:20000,GPS_JUMP_MS:120000,DETAIL_ANIMATION_MS:180,MAP_NEAR_MS:400,MAP_MEDIUM_MS:600,MAP_FAR_MS:800,MAP_LONG_MS:1000,SWITCH_ANIMATION_MS:150,HISTORY_DAYS:30});
@@ -52,7 +52,7 @@ function restartRaster(){
 const expiredMapSession=e=>e?.code==='session_expired'||String(e?.message||e).includes('Map session expired; reload panel');
 async function ensureSdkConfig(hass){
   if(sdkSession&&Date.now()-sdkSession.at<TIMING.MAP_CONFIG_TTL_MS)return sdkSession.config;
-  if(!sdkConfigPromise)sdkConfigPromise=(async()=>{const old=sdkSession?.config;const config=await hass.callWS({type:NS+'config',...(old?{renew_path:old.proxy_path}:{})});if(old&&config.proxy_path!==old.proxy_path)throw Object.assign(new Error('地图会话已失效，请刷新位置中心'),{code:'session_expired'});sdkSession={config,at:Date.now()};return config;})().finally(()=>{sdkConfigPromise=null;});
+  if(!sdkConfigPromise)sdkConfigPromise=(async()=>{const old=sdkSession?.config;const config=await boundedRead(hass,{type:NS+'config',...(old?{renew_path:old.proxy_path}:{})});if(old&&config.proxy_path!==old.proxy_path)throw Object.assign(new Error('地图会话已失效，请刷新位置中心'),{code:'session_expired'});sdkSession={config,at:Date.now()};return config;})().finally(()=>{sdkConfigPromise=null;});
   return sdkConfigPromise;
 }
 function sdk(config){
@@ -62,7 +62,7 @@ function sdk(config){
     configureWebGL();
     window._AMapSecurityConfig={serviceHost:new URL(config.proxy_path,location.origin).href};
     const s=document.createElement('script');
-    const timer=setTimeout(()=>{s.remove();reject(new Error('SDK 加载超时'));},TIMING.SDK_TIMEOUT_MS);
+    const timer=setTimeout(()=>{s.onload=s.onerror=null;s.remove();reject(new Error('SDK 加载超时'));},TIMING.SDK_TIMEOUT_MS);
     s.src='https://webapi.amap.com/maps?v=2.0&key='+encodeURIComponent(config.map_key);
     s.onload=()=>{clearTimeout(timer);const A=window.AMap;A?resolve(A):reject(new Error('SDK 对象不存在'));};
     s.onerror=()=>{clearTimeout(timer);s.remove();reject(new Error('SDK 网络加载失败'));};
@@ -75,6 +75,11 @@ function sdk(config){
 const TABS=[['live','实时位置','mdi:map-marker-radius-outline'],['history','历史轨迹','mdi:map-marker-path'],['devices','设备管理','mdi:cellphone'],['settings','设置','mdi:cog-outline']];
 const NS='locaris/';
 const pad2=n=>String(n).padStart(2,'0');
+function localDate(d){return [d.getFullYear(),pad2(d.getMonth()+1),pad2(d.getDate())].join('-');}
+function calendarRange(now,days){
+  const min=new Date(now);min.setDate(min.getDate()-(days-1));
+  return {minDate:localDate(min),maxDate:localDate(now)};
+}
 function formatClock(d){return [d.getHours(),d.getMinutes(),d.getSeconds()].map(pad2).join(':');}
 function formatDay(d,now=new Date()){
   const yesterday=new Date(now);yesterday.setDate(yesterday.getDate()-1);
@@ -189,7 +194,7 @@ class LocationPanel extends HTMLElement{
       if(signature!==null&&signature!==this.liveHassSignature){this.liveHassSignature=signature;this.liveDirty=true;}
     }
   }
-  connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('locaris.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.lastRefreshAt=0;this.liveDirty=false;this.liveHassSignature=null;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
+  connectedCallback(){this.showHeader=true;try{this.showHeader=localStorage.getItem('locaris.show_header')!=='0';}catch(e){}this.page='live';this.data=null;this.dataError='';this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.renderSignature=null;this.localDay=localDate(new Date());this.lastRefreshAt=0;this.liveDirty=false;this.liveHassSignature=null;this.epoch=(this.epoch||0)+1;this.render();if(this._hass)this.start();}
   disconnectedCallback(){this.epoch++;this.started=false;this.pendingActions=[];this.refreshToken=null;this.refreshNeeded=false;this.data=null;this.liveAddressCache?.clear();this.dataError='';clearInterval(this.timer);this.timer=null;this.liveHassSignature=null;if(this.resumeHandler){window.removeEventListener('focus',this.resumeHandler);window.removeEventListener('pageshow',this.resumeHandler);this.resumeHandler=null;}if(this.visibilityHandler){document.removeEventListener('visibilitychange',this.visibilityHandler);this.visibilityHandler=null;}this.liveListObserver?.disconnect();this.liveListObserver=null;this.liveListView=null;this.stopViewport();this.closeHistoryCalendar();this.stopMenus();this.stopHistoryAddresses();this.releaseHistory();this.destroyMap();}
   render(){
     this.innerHTML=`<style>
@@ -331,7 +336,7 @@ class LocationPanel extends HTMLElement{
     else this.refresh();
     if(this.isConnected&&epoch===this.epoch){
       this.timer=setInterval(()=>this.refreshTick(),TIMING.REFRESH_TICK_MS);
-      this.resumeHandler=()=>{if(!document.hidden&&this.isConnected&&this.started&&this._hass?.connected!==false){if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){this.loadHistory(true);this.drainHistoryAddresses();}}};
+      this.resumeHandler=()=>{if(!document.hidden&&this.isConnected&&this.started&&this._hass?.connected!==false){this.syncLocalDay();if(this.refreshToken)this.refreshNeeded=true;else this.refresh();this.refreshMapSession();if(this.page==='history'){this.loadHistory(true);this.drainHistoryAddresses();}}};
       this.visibilityHandler=()=>{if(!document.hidden)this.resumeHandler?.();};
       document.addEventListener('visibilitychange',this.visibilityHandler);
       window.addEventListener('focus',this.resumeHandler);
@@ -348,8 +353,23 @@ class LocationPanel extends HTMLElement{
   }
   policyValue(key){const value=this.data?.policy?.[key];return POLICY_OPTIONS[key]?.includes(value)?value:DEFAULT_POLICY[key];}
   historyLegend(){return '地图连线仅连接已记录坐标，不代表实际行走路线；间隔超过'+this.policyValue('track_gap_minutes')+'分钟或涉及疑似跳点时以虚线表示';}
+  syncLocalDay(now=new Date()){
+    const day=localDate(now);if(day===this.localDay)return;
+    this.localDay=day;
+    if(this.page==='history'){
+      this.calendarRefresh?.(now);
+      const label=this.querySelector('[data-reference-time]');
+      if(label&&this.historyReference)label.textContent='最后记录：'+fmt(this.historyReference.recorded_at,now);
+    }else if(this.page==='live'&&this.data)this.drawSide();
+    else if(this.page==='settings'){
+      const label=this.querySelector('[data-cleanup-time]');
+      if(label)label.textContent=fmt(this.data?.storage?.last_cleanup,now);
+    }
+  }
   refreshTick(now=Date.now()){
-    if(document.hidden||!this.isConnected||!this.started||this._hass?.connected===false)return;
+    if(document.hidden||!this.isConnected||!this.started)return;
+    this.syncLocalDay(new Date(now));
+    if(this._hass?.connected===false)return;
     const interval=this.page==='live'?this.policyValue('live_refresh_seconds')*1000:this.page==='devices'?TIMING.DEVICE_REFRESH_MS:this.page==='history'?TIMING.HISTORY_REFRESH_MS:TIMING.SETTINGS_REFRESH_MS;
     const elapsed=now-this.lastRefreshAt;
     if(!this.refreshToken&&(elapsed>=interval||(this.page==='live'&&this.liveDirty&&elapsed>=TIMING.LIVE_DIRTY_MS)))this.refresh();
@@ -397,6 +417,7 @@ class LocationPanel extends HTMLElement{
   closeHistoryCalendar(){
     if(this.calendarOutside){document.removeEventListener('pointerdown',this.calendarOutside,true);this.calendarOutside=null;}
     if(this.calendarDismiss){this.calendarDismiss();this.calendarDismiss=null;}
+    this.calendarRefresh=null;
   }
   stopMenus(){
     if(this.menuOutside)document.removeEventListener('pointerdown',this.menuOutside,true);
@@ -488,10 +509,10 @@ class LocationPanel extends HTMLElement{
       for(const d of devices){const opt=el('option',d.name);opt.value=d.entity_id;select.append(opt);}
       if(devices.some(d=>d.entity_id===old))select.value=old;
       const day=el('input');day.type='hidden';day.dataset.historyDate='1';
-      const local=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
-      const today=new Date(),min=new Date(today);min.setDate(min.getDate()-(TIMING.HISTORY_DAYS-1));
-      const maxDate=local(today),minDate=local(min);day.value=date&&date>=minDate&&date<=maxDate?date:maxDate;
-      const calendar=el('div',undefined,'lx-calendar-wrap'),trigger=button('',()=>{if(!popup.hidden){dismiss();return;}popup.hidden=false;trigger.setAttribute('aria-expanded','true');month=new Date(day.value+'T00:00:00');month.setDate(1);drawCalendar();document.addEventListener('pointerdown',outside,true);this.calendarOutside=outside;},'lx-field lx-date-trigger');
+      const local=localDate;
+      let {maxDate,minDate}=calendarRange(new Date(),TIMING.HISTORY_DAYS);
+      day.value=date&&date>=minDate&&date<=maxDate?date:maxDate;
+      const calendar=el('div',undefined,'lx-calendar-wrap'),trigger=button('',()=>{this.calendarRefresh?.();if(!popup.hidden){dismiss();return;}popup.hidden=false;trigger.setAttribute('aria-expanded','true');month=new Date(day.value+'T00:00:00');month.setDate(1);drawCalendar();document.addEventListener('pointerdown',outside,true);this.calendarOutside=outside;},'lx-field lx-date-trigger');
       trigger.setAttribute('aria-label','选择日期');trigger.setAttribute('aria-expanded','false');
       const popup=el('div',undefined,'lx-calendar');popup.hidden=true;
       const dismiss=()=>{popup.hidden=true;trigger.setAttribute('aria-expanded','false');document.removeEventListener('pointerdown',outside,true);if(this.calendarOutside===outside)this.calendarOutside=null;};
@@ -515,6 +536,17 @@ class LocationPanel extends HTMLElement{
           cell.disabled=value<minDate||value>maxDate;cell.setAttribute('aria-pressed',String(value===day.value));cell.setAttribute('aria-label',value);
           if(value===maxDate)cell.classList.add('lx-cal-today');grid.append(cell);
         }popup.append(grid);
+      };
+      this.calendarRefresh=(now=new Date())=>{
+        const next=calendarRange(now,TIMING.HISTORY_DAYS);
+        if(next.maxDate===maxDate&&next.minDate===minDate)return;
+        ({maxDate,minDate}=next);
+        // Preserve the chosen day unless it has aged outside the retention range.
+        if(day.value<minDate||day.value>maxDate){
+          day.value=day.value<minDate?minDate:maxDate;updateLabel();
+          month=new Date(day.value+'T00:00:00');month.setDate(1);this.loadHistory();
+        }
+        if(!popup.hidden)drawCalendar();
       };
       calendar.append(trigger,day,popup);calendar.onkeydown=e=>{if(e.key==='Escape'){dismiss();trigger.focus();}};
       updateLabel();
@@ -719,7 +751,7 @@ class LocationPanel extends HTMLElement{
         const p=this.historyReference,body=el('div',undefined,'lx-list-scroll'),card=el('div',undefined,'lx-point-card'),row=el('div',undefined,'lx-point-row'),info=el('span',undefined,'lx-point-label'),dot=el('span','·','lx-point-number');
         count.remove();
         const address=el('span','地址待加载','lx-group-address');address._lxRecordedAt=p.recorded_at;
-        info.append(address,el('span','最后记录：'+fmt(p.recorded_at),'lx-muted lx-group-count'));
+        const referenceTime=el('span','最后记录：'+fmt(p.recorded_at),'lx-muted lx-group-count');referenceTime.dataset.referenceTime='1';info.append(address,referenceTime);
         row.append(dot,info);card.append(row);body.append(card);timeline.append(body);
         this.historyRegroup=(at,value)=>{if(seq===this.historySeq&&at===p.recorded_at&&address.isConnected)address.textContent=value;};
         this.watchHistoryAddresses(entity,seq)(address);this.updateHistorySync(timeline);
@@ -747,11 +779,11 @@ class LocationPanel extends HTMLElement{
           detail.hidden=true;
           const row=button('',()=>open(i,false),'lx-point-row'),number=el('span',String(groupNumber),'lx-point-number'),info=el('span',undefined,'lx-point-label');
           const address=el('span',this.historyResolved.get(p.recorded_at)||(this.historyFailed.has(p.recorded_at)?'地址暂不可用':'地址待加载'),'lx-group-address');address._lxRecordedAt=p.recorded_at;info.append(address);
-          info.append(el('span',indices.length>1?indices.length+' 次定位记录':timeOnly(p.recorded_at),'lx-muted lx-group-count'));
+          info.append(el('span',indices.length>1?indices.length+' 次定位记录':timeOnly(p.recorded_at)+(p.source==='enable_snapshot'?' · 启用时位置':''),'lx-muted lx-group-count'));
           row.dataset.groupStart=String(i);row.setAttribute('aria-expanded','false');row.append(number,info,arrow);
           const focus=j=>{const old=r.points[this.selectedHistoryIndex],target=this.gcj(r.points[j].longitude,r.points[j].latitude),scope=old?[this.gcj(old.longitude,old.latitude),target]:(this.historyXY||r.points.map(p=>this.gcj(p.longitude,p.latitude)));this.selectHistoryMarker(j);if(this.map)this.flyTo(target,17,undefined,{points:scope});for(const child of detail.children)child.classList.toggle('lx-raw-selected',Number(child.dataset.index)===j);};
           const open=(j,force)=>{populate();if(expanded?.row===row){if(!force){close(true);return;}focus(j);return;}close(false);expanded={row,card,arrow,detail};card.classList.add('lx-point-open');row.setAttribute('aria-expanded','true');arrow.textContent='⌃';this.animatePoint(detail,true);focus(j);};
-          const populate=()=>{if(detail._lxPopulated)return;detail._lxPopulated=true;const fragment=document.createDocumentFragment();for(const j of indices){const raw=r.points[j],child=button('',()=>focus(j),'lx-raw-point'),quality=this.historyFlags?.[j],accuracy=el('span',raw.accuracy==null?'精度未知':Math.round(raw.accuracy)+' m','lx-muted');child.dataset.index=String(j);if(quality?.suspect){accuracy.textContent+=' · 疑似跳点';accuracy.title='短时远距离往返且中间点精度较低，仅提示，不代表确认漂移';accuracy.classList.add('lx-quality-warning');}else if(quality?.lowAccuracy){accuracy.textContent+=' · 低精度';accuracy.title='HA 报告的 GPS 精度大于100米，位置不确定范围较大';accuracy.classList.add('lx-quality-warning');}child.append(el('span',timeOnly(raw.recorded_at)),accuracy);fragment.append(child);}detail.append(fragment);};
+          const populate=()=>{if(detail._lxPopulated)return;detail._lxPopulated=true;const fragment=document.createDocumentFragment();for(const j of indices){const raw=r.points[j],child=button('',()=>focus(j),'lx-raw-point'),quality=this.historyFlags?.[j],accuracy=el('span',raw.accuracy==null?'精度未知':Math.round(raw.accuracy)+' m','lx-muted');child.dataset.index=String(j);if(quality?.suspect){accuracy.textContent+=' · 疑似跳点';accuracy.title='短时远距离往返且中间点精度较低，仅提示，不代表确认漂移';accuracy.classList.add('lx-quality-warning');}else if(quality?.lowAccuracy){accuracy.textContent+=' · 低精度';accuracy.title='HA 报告的 GPS 精度大于100米，位置不确定范围较大';accuracy.classList.add('lx-quality-warning');}child.append(el('span',timeOnly(raw.recorded_at)+(raw.source==='enable_snapshot'?' · 启用时位置':'')),accuracy);fragment.append(child);}detail.append(fragment);};
           row.openPoint=j=>open(j,true);card.append(row,detail);body.append(card);
           if(!this.historyResolved.has(p.recorded_at)&&!this.historyFailed.has(p.recorded_at))watchAddress(address);
           // Exact coordinate groups reuse the representative address; distinct nearby points must resolve individually before merging.
@@ -1119,7 +1151,7 @@ class LocationPanel extends HTMLElement{
       if(removed.length){const excluded=el('details',undefined,'lx-card'),summary=el('summary','已移除设备 · '+removed.length+' 台');excluded.dataset.excluded='1';excluded.open=excludedOpen;excluded.append(summary);for(const d of removed){const row=el('div',undefined,'lx-row'),add=button('重新添加',()=>this.refresh('add',d.entity_id));add.dataset.controlKey='add:'+d.entity_id;row.append(el('span',d.name,'lx-name'),add);excluded.append(row);}stack.append(excluded);}
     }else{
       const d=data.storage,card=el('section',undefined,'lx-card');card.append(el('h2','数据存储'));
-      if(!d)card.append(el('p','正在读取存储信息…','lx-muted'));else for(const [name,value] of [['历史保留',String(d.retention_days)+' 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.location_count)],['最近清理',fmt(d.last_cleanup)]]){const row=el('div',undefined,'lx-row');row.append(el('span',name),el('strong',value));card.append(row);}
+      if(!d)card.append(el('p','正在读取存储信息…','lx-muted'));else for(const [name,value] of [['历史保留',String(d.retention_days)+' 天'],['数据库大小',(d.database_bytes/1024).toFixed(1)+' KB'],['地址缓存',String(d.address_cache_count??0)+' 条'],['历史定位点',String(d.location_count)],['最近清理',fmt(d.last_cleanup)]]){const row=el('div',undefined,'lx-row');const valueNode=el('strong',value);if(name==='最近清理')valueNode.dataset.cleanupTime='1';row.append(el('span',name),valueNode);card.append(row);}
       stack.append(this.drawRuntimePolicy(),card);
       const management=el('section',undefined,'lx-card');management.append(el('h2','数据管理'));
       const removalRow=el('div',undefined,'lx-row'),removalInfo=el('div',undefined,'lx-name'),removalLabel=el('label',undefined,'lx-switch'),removalToggle=el('input');

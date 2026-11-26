@@ -8,10 +8,20 @@
           "security_code": "JS API 安全密钥",
           "service_key": "Web服务 Key"
         }
+      },
+      "reconfigure": {
+        "title": "重新配置高德地图",
+        "description": "重新填写全部三项凭据。现有定位历史及设置不会被删除。",
+        "data": {
+          "map_key": "Web端 JS API Key",
+          "security_code": "JS API 安全密钥",
+          "service_key": "Web服务 Key"
+        }
       }
     },
     "abort": {
-      "single_instance_allowed": "已经配置"
+      "single_instance_allowed": "已经配置",
+      "reconfigure_successful": "配置已更新"
     },
     "error": {
       "empty": "请填写所有凭据"

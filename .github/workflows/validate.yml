@@ -35,6 +35,10 @@ jobs:
           assert re.fullmatch(r"\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?", v)
           assert f"VERSION='{v}'" in (p/"panel.js").read_text()
           assert f"?v={v}" in (p/"__init__.py").read_text()
+          assert f"v{v}" in pathlib.Path("README.md").read_text()
+          for name in ("strings.json", "translations/en.json", "translations/zh-Hans.json"):
+              config = json.loads((p/name).read_text())["config"]
+              assert "reconfigure" in config["step"] and "reconfigure_successful" in config["abort"]
           assert not (p/"database_migration.py").exists()
           for file in p.rglob("*"):
               if file.suffix in (".py", ".js", ".json"):

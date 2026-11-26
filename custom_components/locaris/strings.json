@@ -8,10 +8,20 @@
           "security_code": "JS API security code",
           "service_key": "Web service Key"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure AMap",
+        "description": "Enter all three credentials again. Existing history and settings are retained.",
+        "data": {
+          "map_key": "Web JS API Key",
+          "security_code": "JS API security code",
+          "service_key": "Web service Key"
+        }
       }
     },
     "abort": {
-      "single_instance_allowed": "Already configured"
+      "single_instance_allowed": "Already configured",
+      "reconfigure_successful": "Configuration updated"
     },
     "error": {
       "empty": "All keys are required"

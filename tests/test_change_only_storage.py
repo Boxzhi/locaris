@@ -67,3 +67,15 @@ class ChangeOnlyStorageTest(unittest.TestCase):
         self.assertEqual([tuple(r) for r in con.execute("SELECT recorded_at,accuracy FROM locaris_locations ORDER BY recorded_at")],[(150,10.),(400,20.),(500,10.)])
         self.assertEqual(con.execute("SELECT history_cursor FROM locaris_devices").fetchone()[0],600)
         self.assertEqual(Store.insert(con,"a",[(99,*a)],"state_change"),0)
+
+    def test_explicit_enable_snapshot_is_provisional(self):
+        con=sqlite3.connect(":memory:")
+        self.addCleanup(con.close)
+        con.row_factory=sqlite3.Row
+        con.executescript("CREATE TABLE locaris_devices(entity_id TEXT PRIMARY KEY,import_from INTEGER,history_cursor INTEGER);"
+                          "CREATE TABLE locaris_locations(entity_id TEXT,recorded_at INTEGER,latitude REAL,longitude REAL,accuracy REAL,source TEXT,PRIMARY KEY(entity_id,recorded_at));"
+                          "INSERT INTO locaris_devices VALUES ('a',100,100);")
+        a=(1.,2.,10.)
+        self.assertEqual(Store.insert(con,"a",[(300,*a)],"enable_snapshot"),1)
+        Store.insert(con,"a",[(200,*a)],"recorder",400)
+        self.assertEqual([tuple(r) for r in con.execute("SELECT recorded_at,source FROM locaris_locations")],[(200,"recorder")])

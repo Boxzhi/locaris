@@ -188,7 +188,7 @@ async def ws_history(hass, connection, msg):
         revision = f'{meta["revision"]}:{start}:{end}:{int(msg["collapse_repeated"])}'
         unchanged = msg.get("known_revision") == revision
         def read(con):
-            sql = "SELECT recorded_at,latitude,longitude,accuracy FROM locaris_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at"
+            sql = "SELECT recorded_at,latitude,longitude,accuracy,source FROM locaris_locations WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at"
             now = now_ms()
             cutoff = now-WINDOW
             args = (entity,max(start,cutoff),min(end,now+1))
@@ -487,7 +487,7 @@ async def async_setup_entry(hass, entry):
         state["proxy_runtime"] = {"times":[],"inflight":0}
         state["address_runtime"] = {"lock":asyncio.Lock(),"cache":{},"last_request":-1000,"pending":0}
         state["address_cache"] = state["address_runtime"]["cache"]
-        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=0.2.12-preview", require_admin=True, embed_iframe=True)
+        await panel_custom.async_register_panel(hass, frontend_url_path=PANEL, webcomponent_name=WEB_COMPONENT, sidebar_title="位置中心", sidebar_icon="mdi:map-marker-radius-outline", module_url="/locaris-panel-assets/panel.js?v=1.0.0-rc.1", require_admin=True, embed_iframe=True)
     except BaseException:
         state.pop("active", None)
         state.pop("entry_id", None)

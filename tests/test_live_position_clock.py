@@ -63,3 +63,11 @@ class LiveClockTest(unittest.TestCase):
         c.observe("a",(100,*a),None)
         c.observe("a",(200,*a),a)
         self.assertIsNone(c.timestamp("a",a))
+
+    def test_first_confirmed_live_transition_can_restore_but_snapshot_cannot(self):
+        with sqlite3.connect(":memory:") as con:
+            con.execute("CREATE TABLE locaris_locations(entity_id,recorded_at,latitude,longitude,accuracy,source)")
+            con.execute("INSERT INTO locaris_locations VALUES('a',100,1.,2.,10.,'state_change')")
+            con.execute("INSERT INTO locaris_locations VALUES('b',100,1.,2.,10.,'enable_snapshot')")
+            self.assertEqual(last_recorded_change(con,"a",0,(1.,2.,10.)),100)
+            self.assertIsNone(last_recorded_change(con,"b",0,(1.,2.,10.)))

@@ -60,10 +60,16 @@ def last_recorded_change(con, entity, earliest, payload):
         (entity, earliest, *payload),
     ).fetchone()
     if prior is None:
-        return None
+        # A confirmed live state transition is sufficient even if the
+        # preceding point has already expired or was not stored.
+        first = con.execute(
+            "SELECT recorded_at,source FROM locaris_locations WHERE entity_id=? AND recorded_at>=? ORDER BY recorded_at LIMIT 1",
+            (entity, earliest),
+        ).fetchone()
+        return first[0] if first is not None and first[1] == "state_change" else None
     first = con.execute(
         "SELECT recorded_at,source FROM locaris_locations WHERE entity_id=? AND recorded_at>? "
         "ORDER BY recorded_at ASC LIMIT 1",
         (entity, prior[0]),
     ).fetchone()
-    return first[0] if first is not None and first[1] not in ("state_change_daily", "state_change_initial") else None
+    return first[0] if first is not None and first[1] not in ("state_change_daily", "state_change_initial", "enable_snapshot") else None

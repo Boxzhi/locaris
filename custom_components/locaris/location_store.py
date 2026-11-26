@@ -457,7 +457,7 @@ class Store:
         before = con.total_changes
         eligible = sorted((p for p in rows if cutoff <= p[0] <= now), key=lambda p: p[0])
         for p in eligible:
-            if source == "state_change_initial":
+            if source in ("state_change_initial", "enable_snapshot"):
                 prior = con.execute("SELECT latitude,longitude,accuracy FROM locaris_locations "
                                     "WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at DESC LIMIT 1",
                                     (entity, cutoff, p[0])).fetchone()
@@ -465,7 +465,7 @@ class Store:
                     continue
             con.execute("INSERT OR IGNORE INTO locaris_locations VALUES (?,?,?,?,?,?)", (entity, *p, source))
         if source == "recorder" and eligible:
-            compact_repeated(con, entity, cutoff)
+            compact_repeated(con, entity, cutoff, affected_from=eligible[0][0])
         count = con.total_changes - before
         if cursor is not None:
             con.execute("UPDATE locaris_devices SET history_cursor=MAX(history_cursor,?) WHERE entity_id=?", (cursor, entity))
@@ -500,6 +500,19 @@ class Store:
             self.invalidate(entity)
             self.devices.add(entity)
             self.listen()
+            # Capture an already available position only on explicit authorization.
+            # The timestamp is observation time, not the phone's GPS sample time.
+            payload = position(self.hass.states.get(entity))
+            if payload is not None:
+                stamp = now_ms()
+                self.last_valid[entity] = payload
+                try:
+                    count = await self.run(self.insert, entity, [(stamp, *payload)], "enable_snapshot")
+                    self.history_sync.changed(entity, count)
+                except (sqlite3.Error, OSError):
+                    self.last_valid.pop(entity, None)
+                    self.defer_backfill(entity, self.generations.get(entity, 0), stamp)
+                    self.warn("Initial location snapshot failed (no coordinates logged)")
         self.schedule_backfill(entity)
 
     async def disable(self, entity):
@@ -570,12 +583,12 @@ class Store:
                 end_dt = datetime.fromtimestamp(stop / 1000, timezone.utc)
                 def read():
                     result = history.get_significant_states(self.hass, begin_dt, end_dt, [entity],
-                        include_start_time_state=previous is not None and start > earliest, significant_changes_only=False,
+                        include_start_time_state=start > max(earliest, now_ms()-WINDOW), significant_changes_only=False,
                         minimal_response=False, no_attributes=False)
                     # A synthetic start state is stamped at begin_dt (start-1).
                     # It is comparison context only, never a new stored sample.
                     # Do not seed from before the current recording permission.
-                    return recorder_changes(result.get(entity, []), start, stop, previous, earliest, point)
+                    return recorder_changes(result.get(entity, []), start, stop, previous, max(earliest, now_ms()-WINDOW), point)
                 if not self.recorder_available(recorder):
                     self.defer_backfill(entity, generation)
                     return
