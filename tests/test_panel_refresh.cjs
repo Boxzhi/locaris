@@ -137,3 +137,18 @@ test('calendar range moves across midnight and new year with a 30 day window',()
   assert.match(source,/this.calendarRefresh=null/);
   assert.match(source,/this.syncLocalDay\(new Date\(now\)\)/);
 });
+
+
+test('midnight updates history reference without replacing selection or map',()=>{
+  const context={};vm.createContext(context);
+  const start=source.indexOf('const pad2='),end=source.indexOf('const el=',start);
+  const method=source.slice(source.indexOf('  syncLocalDay('),source.indexOf('  refreshTick(',source.indexOf('  syncLocalDay(')));
+  vm.runInContext(source.slice(start,end)+'\nclass P{'+method+'};this.P=P;',context);
+  const panel=new context.P(),label={textContent:''},now=new Date(2027,0,1,0,1);
+  let calls=0;
+  Object.assign(panel,{page:'history',localDay:'2026-12-31',historyReference:{recorded_at:new Date(2026,11,31,23,30).getTime()},calendarRefresh:()=>calls++,querySelector:()=>label});
+  panel.syncLocalDay(now);panel.syncLocalDay(now);
+  assert.equal(calls,1);
+  assert.equal(label.textContent,'最后记录：昨日 23:30:00');
+  assert.equal(panel.localDay,'2027-01-01');
+});

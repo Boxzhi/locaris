@@ -165,8 +165,18 @@ class Store:
                                   "ORDER BY recorded_at DESC LIMIT 1", (entity, now_ms()-WINDOW, entity)).fetchone()
                 if row is not None:
                     values[entity] = tuple(row)
+                else:
+                    consent = con.execute("SELECT import_from FROM locaris_devices WHERE entity_id=?", (entity,)).fetchone()
+                    if consent is not None and consent[0] < now_ms()-WINDOW:
+                        # All retained history may have expired while stationary.
+                        # Seed memory only after restart, never synthesize a new point.
+                        values[entity] = None
             return values
-        self.last_valid.update(await self.run(baselines))
+        for entity, payload in (await self.run(baselines)).items():
+            if payload is None:
+                payload = position(self.hass.states.get(entity))
+            if payload is not None:
+                self.last_valid[entity] = payload
         await self.discover()
         await self.cleanup()
         for entity in self.managed:
@@ -456,14 +466,16 @@ class Store:
         cutoff = max(now - WINDOW, device["import_from"])
         before = con.total_changes
         eligible = sorted((p for p in rows if cutoff <= p[0] <= now), key=lambda p: p[0])
-        for p in eligible:
-            if source in ("state_change_initial", "enable_snapshot"):
+        for row in eligible:
+            p = row[:4]
+            row_source = row[4] if source == "recorder" and len(row) == 5 else source
+            if row_source in ("state_change_initial", "enable_snapshot", "recorder_initial"):
                 prior = con.execute("SELECT latitude,longitude,accuracy FROM locaris_locations "
                                     "WHERE entity_id=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at DESC LIMIT 1",
                                     (entity, cutoff, p[0])).fetchone()
                 if prior is not None and tuple(prior) == tuple(p[1:]):
                     continue
-            con.execute("INSERT OR IGNORE INTO locaris_locations VALUES (?,?,?,?,?,?)", (entity, *p, source))
+            con.execute("INSERT OR IGNORE INTO locaris_locations VALUES (?,?,?,?,?,?)", (entity, *p, row_source))
         if source == "recorder" and eligible:
             compact_repeated(con, entity, cutoff, affected_from=eligible[0][0])
         count = con.total_changes - before
@@ -588,7 +600,7 @@ class Store:
                     # A synthetic start state is stamped at begin_dt (start-1).
                     # It is comparison context only, never a new stored sample.
                     # Do not seed from before the current recording permission.
-                    return recorder_changes(result.get(entity, []), start, stop, previous, max(earliest, now_ms()-WINDOW), point)
+                    return recorder_changes(result.get(entity, []), start, stop, previous, max(earliest, now_ms()-WINDOW), point, mark_initial=True)
                 if not self.recorder_available(recorder):
                     self.defer_backfill(entity, generation)
                     return

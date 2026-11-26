@@ -72,4 +72,4 @@ def last_recorded_change(con, entity, earliest, payload):
         "ORDER BY recorded_at ASC LIMIT 1",
         (entity, prior[0]),
     ).fetchone()
-    return first[0] if first is not None and first[1] not in ("state_change_daily", "state_change_initial", "enable_snapshot") else None
+    return first[0] if first is not None and first[1] not in ("state_change_daily", "state_change_initial", "enable_snapshot", "recorder_initial") else None

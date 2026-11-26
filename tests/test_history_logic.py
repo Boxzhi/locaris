@@ -90,3 +90,11 @@ class HistoryLogicTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class RecorderInitialTest(unittest.TestCase):
+    def test_initial_is_distinct_from_confirmed_change_and_boundary(self):
+        rows, prev = logic.recorder_changes([(10,1,2,3),(11,1,2,3),(12,1,2,4)],10,20,None,0,lambda x:x,mark_initial=True)
+        self.assertEqual(rows,[(10,1,2,3,"recorder_initial"),(12,1,2,4,"recorder")])
+        self.assertEqual(prev,(1,2,4))
+        rows, _ = logic.recorder_changes([(9,1,2,3),(10,1,2,3),(12,1,2,4)],10,20,None,0,lambda x:x,mark_initial=True)
+        self.assertEqual(rows,[(12,1,2,4,"recorder")])

@@ -8,7 +8,7 @@ def day_bounds(stamp, tz):
     end = start + timedelta(days=1)
     return int(start.timestamp()*1000), int(end.timestamp()*1000)
 
-def recorder_changes(states, start, stop, previous, earliest, point):
+def recorder_changes(states, start, stop, previous, earliest, point, *, mark_initial=False):
     """Keep one initial real sample and subsequent payload changes, across days."""
     rows = []
     prev = previous
@@ -24,7 +24,7 @@ def recorder_changes(states, start, stop, previous, earliest, point):
         if stamp >= stop:
             continue
         if prev is None or payload != prev:
-            rows.append(p)
+            rows.append((*p, "recorder_initial" if prev is None else "recorder") if mark_initial else p)
         prev = payload
     return rows, prev
 
@@ -32,13 +32,13 @@ def compact_repeated(con, entity, cutoff, *, legacy=False, affected_from=None):
     """Remove redundant provisional/legacy anchors, never confirmed live changes.
     Only compare within one currently authorized recording interval.
     """
-    sources = {"state_change_initial", "state_change_daily", "enable_snapshot"}
+    sources = {"state_change_initial", "state_change_daily", "enable_snapshot", "recorder_initial"}
     if not legacy:
         # Only provisional successors can become redundant after an insertion.
         # The composite primary key handles each predecessor lookup efficiently.
         candidates = con.execute(
             "SELECT recorded_at,latitude,longitude,accuracy FROM locaris_locations "
-            "WHERE entity_id=? AND recorded_at>=? AND source IN ('state_change_initial','state_change_daily','enable_snapshot') ORDER BY recorded_at",
+            "WHERE entity_id=? AND recorded_at>=? AND source IN ('state_change_initial','state_change_daily','enable_snapshot','recorder_initial') ORDER BY recorded_at",
             (entity, max(cutoff, affected_from if affected_from is not None else cutoff))).fetchall()
         removed = 0
         for row in candidates:
